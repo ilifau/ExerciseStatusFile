@@ -176,3 +176,12 @@ readme_workflow_step3_desc#:#Upload complete ZIP again
 readme_member#:#Member
 readme_login#:#Login
 readme_id#:#ID
+
+<!-- Checksum / Modified Submissions -->
+readme_modified_submission_section#:#Modified Submissions
+readme_modified_submission_info#:#If you directly edit a submission file (e.g. code corrections): The plugin automatically detects this via hash comparison. The modified file will be uploaded as feedback and automatically renamed (e.g. "File.java" → "File_corrected.java"). You will receive a detailed overview of renamed files.
+readme_modified_submission_recommendation#:#Recommendation: Better create a NEW file with a different name.
+upload_modified_submissions_detected#:#Modified submissions detected
+upload_modified_submissions_renamed#:#modified submission(s) were automatically renamed and uploaded as feedback
+upload_renamed_file_list#:#Renamed files
+upload_modified_submission_hint#:#Note: Modified submissions were automatically renamed to make them recognizable as feedback. Please review the uploaded files.

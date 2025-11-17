@@ -74,6 +74,7 @@ class ilExFeedbackUploadHandler
 
             $extracted_files = $this->extractZipContents($temp_zip, 'team_extract');
             $status_files = $this->findStatusFiles($extracted_files);
+            $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
 
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
@@ -86,7 +87,7 @@ class ilExFeedbackUploadHandler
             }
 
             // Feedback-Files werden unabhängig von Status-Updates verarbeitet
-            $this->processTeamFeedbackFiles($extracted_files, $assignment_id);
+            $this->processTeamFeedbackFiles($extracted_files, $assignment_id, $checksums);
 
         } finally {
             $this->cleanupTempFile($temp_zip);
@@ -106,6 +107,7 @@ class ilExFeedbackUploadHandler
 
             $extracted_files = $this->extractZipContents($temp_zip, 'individual_extract');
             $status_files = $this->findStatusFiles($extracted_files);
+            $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
 
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
@@ -118,7 +120,7 @@ class ilExFeedbackUploadHandler
             }
 
             // Feedback-Files werden unabhängig von Status-Updates verarbeitet
-            $this->processIndividualFeedbackFiles($extracted_files, $assignment_id);
+            $this->processIndividualFeedbackFiles($extracted_files, $assignment_id, $checksums);
 
         } finally {
             $this->cleanupTempFile($temp_zip);
@@ -340,17 +342,45 @@ class ilExFeedbackUploadHandler
     private function findStatusFiles(array $extracted_files): array
     {
         $status_files = [];
-        
+
         foreach ($extracted_files as $file) {
             $basename = basename($file['original_name']);
-            
+
             if (in_array($basename, ['status.xlsx', 'status.csv', 'status.xls']) ||
                 in_array($basename, ['batch_status.xlsx', 'batch_status.csv'])) {
                 $status_files[] = $file['extracted_path'];
             }
         }
-        
+
         return $status_files;
+    }
+
+    /**
+     * Lädt Checksums aus der checksums.json Datei im ZIP
+     * @return array Checksums oder leeres Array falls nicht vorhanden
+     */
+    private function loadChecksumsFromExtractedFiles(array $extracted_files): array
+    {
+        foreach ($extracted_files as $file) {
+            $basename = basename($file['original_name']);
+
+            if ($basename === 'checksums.json') {
+                $checksums_path = $file['extracted_path'];
+
+                if (file_exists($checksums_path)) {
+                    $content = file_get_contents($checksums_path);
+                    $checksums = json_decode($content, true);
+
+                    if (is_array($checksums)) {
+                        $this->logger->info("Loaded " . count($checksums) . " checksums from checksums.json");
+                        return $checksums;
+                    }
+                }
+            }
+        }
+
+        $this->logger->info("No checksums.json found in ZIP - checksum validation disabled");
+        return [];
     }
 
     /**
@@ -516,7 +546,7 @@ class ilExFeedbackUploadHandler
     /**
      * Verarbeitet Team-spezifische Feedback-Files
      */
-    private function processTeamFeedbackFiles(array $extracted_files, int $assignment_id): void
+    private function processTeamFeedbackFiles(array $extracted_files, int $assignment_id, array $checksums = []): void
     {
         $this->logger->info("processTeamFeedbackFiles: Starting with " . count($extracted_files) . " extracted files");
 
@@ -540,10 +570,10 @@ class ilExFeedbackUploadHandler
     /**
      * Verarbeitet Individual Feedback-Files
      */
-    private function processIndividualFeedbackFiles(array $extracted_files, int $assignment_id): void
+    private function processIndividualFeedbackFiles(array $extracted_files, int $assignment_id, array $checksums = []): void
     {
         $individual_feedback_files = $this->findIndividualFeedbackFiles($extracted_files);
-        
+
         if (empty($individual_feedback_files)) {
             return;
         }

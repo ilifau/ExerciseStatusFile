@@ -108,9 +108,10 @@ class ilExMultiFeedbackDownloadHandler
         
         try {
             $this->addStatusFiles($zip, $assignment, $teams, $temp_dir);
-            $this->addTeamSubmissionsFromArrays($zip, $assignment, $teams);
+            $submission_checksums = $this->addTeamSubmissionsFromArrays($zip, $assignment, $teams);
+            $this->addChecksumsFile($zip, $submission_checksums, $temp_dir);
             $this->addReadme($zip, $assignment, $teams, $temp_dir);
-            
+
             $zip->close();
             return $zip_path;
             
@@ -122,30 +123,35 @@ class ilExMultiFeedbackDownloadHandler
 
     /**
      * Team-Submissions aus Array-Daten hinzufügen
+     * @return array Checksums aller hinzugefügten Dateien
      */
-    private function addTeamSubmissionsFromArrays(\ZipArchive &$zip, \ilExAssignment $assignment, array $teams_data): void
+    private function addTeamSubmissionsFromArrays(\ZipArchive &$zip, \ilExAssignment $assignment, array $teams_data): array
     {
         $base_name = $this->toAscii("Multi_Feedback_" . $assignment->getTitle() . "_" . $assignment->getId());
-        
+        $checksums = [];
+
         foreach ($teams_data as $team_data) {
             $team_id = $team_data['team_id'];
             $team_folder = $base_name . "/Team_" . $team_id;
-            
+
             $zip->addEmptyDir($team_folder);
-            
+
             // WICHTIG: Sammle ALLE Submissions von ALLEN Team-Mitgliedern
             $all_team_submissions = $this->collectAllTeamSubmissions($assignment->getId(), $team_data['members']);
-            
+
             foreach ($team_data['members'] as $member_data) {
                 $user_id = $member_data['user_id'];
                 $user_folder = $team_folder . "/" . $this->generateUserFolderName($member_data);
-                
+
                 $zip->addEmptyDir($user_folder);
-                
+
                 // Füge ALLE Team-Submissions zu JEDEM Team-Mitglied hinzu
-                $this->addTeamSubmissionsToUserFolder($zip, $user_folder, $all_team_submissions, $user_id);
+                $user_checksums = $this->addTeamSubmissionsToUserFolder($zip, $user_folder, $all_team_submissions, $user_id);
+                $checksums = array_merge($checksums, $user_checksums);
             }
         }
+
+        return $checksums;
     }
     
     /**
@@ -188,59 +194,71 @@ class ilExMultiFeedbackDownloadHandler
     
     /**
      * Füge Team-Submissions zu User-Folder hinzu
+     * @return array Checksums der hinzugefügten Dateien
      */
-    private function addTeamSubmissionsToUserFolder(\ZipArchive &$zip, string $user_folder, array $all_team_submissions, int $current_user_id): void
+    private function addTeamSubmissionsToUserFolder(\ZipArchive &$zip, string $user_folder, array $all_team_submissions, int $current_user_id): array
     {
+        $checksums = [];
+
         try {
             if (empty($all_team_submissions)) {
                 $this->logger->debug("No team submissions found for folder: $user_folder");
-                return;
+                return $checksums;
             }
-            
+
             $this->logger->debug("Adding " . count($all_team_submissions) . " team submission(s) to: $user_folder");
-            
+
             $files_added = 0;
             foreach ($all_team_submissions as $file_data) {
                 $file_name = $file_data['filename'];
                 $file_path = $file_data['filepath'];
                 $uploaded_by = $file_data['uploaded_by_user_id'];
                 $uploaded_by_login = $file_data['uploaded_by_login'];
-                
+
                 if (!file_exists($file_path)) {
                     $this->logger->warning("File does not exist: $file_path");
                     continue;
                 }
-                
+
                 if (!is_readable($file_path)) {
                     $this->logger->warning("File is not readable: $file_path");
                     continue;
                 }
-                
+
                 // Entferne ILIAS Timestamp-Prefix
                 $clean_filename = $this->removeILIASTimestampPrefix($file_name);
-                
+
                 // Optional: Markiere wer die Datei hochgeladen hat (wenn nicht der aktuelle User)
                 if ($uploaded_by != $current_user_id) {
                     // Füge Uploader-Info hinzu (optional, auskommentiert)
                     // $clean_filename = "[von_{$uploaded_by_login}]_" . $clean_filename;
                 }
-                
+
                 $safe_filename = $this->toAscii($clean_filename);
                 $zip_file_path = $user_folder . "/" . $safe_filename;
-                
+
                 if ($zip->addFile($file_path, $zip_file_path)) {
                     $files_added++;
                     $this->logger->debug("Successfully added team file: $safe_filename (uploaded by user $uploaded_by)");
+
+                    // Berechne Hash für Checksum
+                    $checksums[$zip_file_path] = [
+                        'md5' => md5_file($file_path),
+                        'size' => filesize($file_path),
+                        'type' => 'submission'
+                    ];
                 } else {
                     $this->logger->error("Failed to add file to ZIP: $file_path -> $zip_file_path");
                 }
             }
-            
+
             $this->logger->debug("Added $files_added team files to $user_folder");
-            
+
         } catch (Exception $e) {
             $this->logger->error("Error adding team submissions to folder: " . $e->getMessage());
         }
+
+        return $checksums;
     }    
 
     /**
@@ -463,11 +481,31 @@ class ilExMultiFeedbackDownloadHandler
     {
         $readme_content = $this->generateReadmeContent($assignment, $teams);
         $readme_path = $temp_dir . '/README.md';
-        
+
         file_put_contents($readme_path, $readme_content);
         $zip->addFile($readme_path, "README.md");
     }
-    
+
+    /**
+     * Checksum-Datei hinzufügen
+     * Speichert MD5-Hashes aller Submission-Dateien zur späteren Validierung
+     */
+    private function addChecksumsFile(\ZipArchive &$zip, array $checksums, string $temp_dir): void
+    {
+        if (empty($checksums)) {
+            $this->logger->warning("No checksums to add - skipping checksums.json");
+            return;
+        }
+
+        $checksums_path = $temp_dir . '/checksums.json';
+        $json_content = json_encode($checksums, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        file_put_contents($checksums_path, $json_content);
+        $zip->addFile($checksums_path, "checksums.json");
+
+        $this->logger->info("Added checksums.json with " . count($checksums) . " file hashes");
+    }
+
     /**
      * Metadaten hinzufügen
      */

@@ -176,3 +176,12 @@ readme_workflow_step3_desc#:#ZIP komplett wieder hochladen
 readme_member#:#Mitglied
 readme_login#:#Login
 readme_id#:#ID
+
+<!-- Checksum / Modified Submissions -->
+readme_modified_submission_section#:#Veränderte Submissions
+readme_modified_submission_info#:#Falls Sie eine Submission-Datei direkt bearbeiten (z.B. Code-Korrekturen): Das Plugin erkennt dies automatisch durch Hash-Vergleich. Die veränderte Datei wird als Feedback hochgeladen und automatisch umbenannt (z.B. "Datei.java" → "Datei_korrigiert.java"). Sie erhalten eine detaillierte Übersicht der umbenannten Dateien.
+readme_modified_submission_recommendation#:#Empfehlung: Legen Sie lieber eine NEUE Datei mit anderem Namen an.
+upload_modified_submissions_detected#:#Veränderte Submissions erkannt
+upload_modified_submissions_renamed#:#veränderte Submission(s) wurden automatisch umbenannt und als Feedback hochgeladen
+upload_renamed_file_list#:#Umbenannte Dateien
+upload_modified_submission_hint#:#Hinweis: Veränderte Submissions wurden automatisch umbenannt, um sie als Feedback erkennbar zu machen. Bitte prüfen Sie die hochgeladenen Dateien.
