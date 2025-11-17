@@ -206,15 +206,34 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 'tutor_id' => $GLOBALS['DIC']->user()->getId(),
                 'zip_path' => $uploaded_file['tmp_name']
             ]);
-            
-            // Success Response
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode([
+
+            // Processing Stats abrufen
+            $stats = $upload_handler->getProcessingStats();
+
+            // Response-Daten zusammenstellen
+            $response = [
                 'success' => true,
                 'message' => 'Multi-Feedback Upload erfolgreich verarbeitet',
                 'file' => $uploaded_file['name'],
                 'size' => $uploaded_file['size']
-            ], JSON_UNESCAPED_UNICODE);
+            ];
+
+            // Füge Details über umbenannte Dateien hinzu, falls vorhanden
+            if (!empty($stats['renamed_files'])) {
+                $response['renamed_files'] = $stats['renamed_files'];
+                $response['renamed_count'] = $stats['renamed_count'];
+
+                // Erweiterte Message für User
+                $renamed_msg = sprintf(
+                    $this->plugin->txt('upload_modified_submissions_renamed'),
+                    $stats['renamed_count']
+                );
+                $response['message'] .= ' ' . $renamed_msg;
+            }
+
+            // Success Response
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
             exit;
             
         } catch (Exception $e) {

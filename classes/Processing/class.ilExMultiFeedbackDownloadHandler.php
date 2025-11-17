@@ -715,6 +715,7 @@ class ilExMultiFeedbackDownloadHandler
                "Multi_Feedback_[Assignment]_[TeamCount]_Teams/\n" .
                "├── status.xlsx                # " . $this->plugin->txt('readme_structure_status_xlsx') . "\n" .
                "├── status.csv                 # " . $this->plugin->txt('readme_structure_status_csv') . "\n" .
+               "├── checksums.json             # Checksums for submission integrity\n" .
                "├── README.md                  # " . $this->plugin->txt('readme_structure_readme') . "\n" .
                "└── Team_[ID]/                 # " . $this->plugin->txt('readme_structure_per_team') . "\n" .
                "    └── [Lastname_Firstname_Login_ID]/  # " . $this->plugin->txt('readme_structure_per_member') . "\n" .
@@ -730,6 +731,9 @@ class ilExMultiFeedbackDownloadHandler
                    "   " . $this->plugin->txt('readme_workflow_step2_example') . "\n" .
                "3. **" . $this->plugin->txt('readme_workflow_step3') . ":** " . $this->plugin->txt('readme_workflow_step3_desc') .
                    " Feedback-Dateien werden automatisch verarbeitet.\n\n" .
+               "## " . $this->plugin->txt('readme_modified_submission_section') . "\n\n" .
+               $this->plugin->txt('readme_modified_submission_info') . "\n\n" .
+               $this->plugin->txt('readme_modified_submission_recommendation') . "\n\n" .
                "## " . $this->plugin->txt('readme_team_overview') . "\n\n" .
                $this->generateTeamOverviewForReadme($teams) . "\n";
     }

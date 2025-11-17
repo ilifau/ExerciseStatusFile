@@ -15,6 +15,7 @@ class ilExFeedbackUploadHandler
     private ilLogger $logger;
     private array $temp_directories = [];
     private array $processing_stats = [];
+    private array $renamed_files = []; // Tracking für umbenannte Dateien
     
     public function __construct()
     {
@@ -561,7 +562,7 @@ class ilExFeedbackUploadHandler
 
         foreach ($team_feedback_files as $team_id => $files) {
             $this->logger->info("processTeamFeedbackFiles: Processing team_id=$team_id with " . count($files) . " files");
-            $this->processTeamSpecificFeedback($team_id, $files, $assignment_id);
+            $this->processTeamSpecificFeedback($team_id, $files, $assignment_id, $checksums);
         }
 
         $this->processing_stats['team_feedback_files'] = count($team_feedback_files);
@@ -577,11 +578,11 @@ class ilExFeedbackUploadHandler
         if (empty($individual_feedback_files)) {
             return;
         }
-        
+
         foreach ($individual_feedback_files as $user_id => $files) {
-            $this->processUserSpecificFeedback($user_id, $files, $assignment_id);
+            $this->processUserSpecificFeedback($user_id, $files, $assignment_id, false, $checksums);
         }
-        
+
         $this->processing_stats['individual_feedback_files'] = count($individual_feedback_files);
     }
     
@@ -653,19 +654,19 @@ class ilExFeedbackUploadHandler
     /**
      * Verarbeitet Team-spezifisches Feedback
      */
-    private function processTeamSpecificFeedback(int $team_id, array $files, int $assignment_id): void
+    private function processTeamSpecificFeedback(int $team_id, array $files, int $assignment_id, array $checksums = []): void
     {
         try {
             $teams = ilExAssignmentTeam::getInstancesFromMap($assignment_id);
-            
+
             if (!isset($teams[$team_id])) {
                 $this->logger->warning("Team $team_id not found in assignment $assignment_id");
                 return;
             }
-            
+
             $team = $teams[$team_id];
             $member_ids = $team->getMembers();
-            
+
             if (empty($member_ids)) {
                 $this->logger->warning("Team $team_id has no members");
                 return;
@@ -675,18 +676,18 @@ class ilExFeedbackUploadHandler
             // Dies macht die Handhabung für Tutoren intuitiver
 
             $this->logger->debug("Processing feedback for team $team_id with " . count($member_ids) . " members");
-            
+
             // Verarbeite Files für JEDES Team-Mitglied
             foreach ($member_ids as $member_id) {
                 $existing_submissions = $this->getExistingSubmissionFiles($assignment_id, $member_id);
-                $new_feedback_files = $this->filterNewFeedbackFiles($files, $existing_submissions);
+                $new_feedback_files = $this->filterNewFeedbackFiles($files, $existing_submissions, $checksums);
 
                 if (!empty($new_feedback_files)) {
                     // Already filtered, so skip filtering in processUserSpecificFeedback
-                    $this->processUserSpecificFeedback($member_id, $new_feedback_files, $assignment_id, true);
+                    $this->processUserSpecificFeedback($member_id, $new_feedback_files, $assignment_id, true, $checksums);
                 }
             }
-            
+
         } catch (Exception $e) {
             $this->logger->error("Error processing team feedback for team $team_id: " . $e->getMessage());
         }
@@ -696,10 +697,8 @@ class ilExFeedbackUploadHandler
      * Verarbeitet User-spezifisches Feedback
      * @param bool $already_filtered Ob die Files bereits gefiltert wurden (vermeidet doppelte Filterung)
      */
-    private function processUserSpecificFeedback(int $user_id, array $files, int $assignment_id, bool $already_filtered = false): void
+    private function processUserSpecificFeedback(int $user_id, array $files, int $assignment_id, bool $already_filtered = false, array $checksums = []): void
     {
-        global $DIC;
-
         try {
             // Feedback-Dateien werden immer verarbeitet, auch ohne Status-Update
             // Dies macht die Handhabung für Tutoren intuitiver
@@ -707,7 +706,7 @@ class ilExFeedbackUploadHandler
             // Nur filtern wenn noch nicht gefiltert
             if (!$already_filtered) {
                 $existing_submissions = $this->getExistingSubmissionFiles($assignment_id, $user_id);
-                $new_feedback_files = $this->filterNewFeedbackFiles($files, $existing_submissions);
+                $new_feedback_files = $this->filterNewFeedbackFiles($files, $existing_submissions, $checksums);
             } else {
                 $new_feedback_files = $files;
             }
@@ -940,18 +939,22 @@ class ilExFeedbackUploadHandler
 
     /**
      * Filtere neue Feedback-Files
+     * Prüft gegen existing submissions und optional gegen checksums
      */
-    private function filterNewFeedbackFiles(array $files, array $existing_submissions): array
+    private function filterNewFeedbackFiles(array $files, array $existing_submissions, array $checksums = []): array
     {
         $new_files = [];
 
         $this->logger->debug("filterNewFeedbackFiles: Checking " . count($files) . " files against " . count($existing_submissions) . " existing submissions");
+        if (!empty($checksums)) {
+            $this->logger->debug("filterNewFeedbackFiles: Checksum validation enabled with " . count($checksums) . " checksums");
+        }
 
         foreach ($files as $file) {
             $filename = $file['filename'];
 
             // Skip Status-Files und System-Files
-            if (in_array($filename, ['status.xlsx', 'status.csv', 'status.xls', 'README.md'])) {
+            if (in_array($filename, ['status.xlsx', 'status.csv', 'status.xls', 'README.md', 'checksums.json'])) {
                 $this->logger->debug("filterNewFeedbackFiles: Skipping system file: $filename");
                 continue;
             }
@@ -966,30 +969,125 @@ class ilExFeedbackUploadHandler
 
             // Prüfe ob File bereits als Submission existiert
             $is_submission = false;
+            $matched_submission = null;
+
             foreach ($existing_submissions as $submission) {
                 if ($filename === $submission || $clean_filename === $submission) {
                     $is_submission = true;
-                    $this->logger->debug("filterNewFeedbackFiles: '$filename' matches existing submission '$submission' - FILTERED OUT");
+                    $matched_submission = $submission;
                     break;
                 }
 
                 $clean_submission = preg_replace('/^(\d{14})_/', '', $submission);
                 if ($clean_filename === $clean_submission) {
                     $is_submission = true;
-                    $this->logger->debug("filterNewFeedbackFiles: '$filename' (cleaned: '$clean_filename') matches existing submission '$submission' (cleaned: '$clean_submission') - FILTERED OUT");
+                    $matched_submission = $submission;
                     break;
                 }
             }
 
-            if (!$is_submission) {
-                $this->logger->debug("filterNewFeedbackFiles: '$filename' is NEW feedback file - ADDED");
-                $new_files[] = $file;
+            // Wenn es eine Submission ist, prüfe Hash wenn checksums verfügbar
+            if ($is_submission && !empty($checksums)) {
+                $file_modified = $this->checkIfFileModified($file, $checksums);
+
+                if ($file_modified) {
+                    // Datei wurde modifiziert - umbenennen und als Feedback hochladen
+                    $renamed_file = $this->renameModifiedSubmission($file);
+                    $new_files[] = $renamed_file;
+
+                    $this->logger->info("filterNewFeedbackFiles: '$filename' is modified submission - renamed to '{$renamed_file['filename']}' - ADDED as feedback");
+                    continue;
+                } else {
+                    // Datei ist identisch - filtern
+                    $this->logger->debug("filterNewFeedbackFiles: '$filename' matches existing submission '$matched_submission' (identical hash) - FILTERED OUT");
+                    continue;
+                }
             }
+
+            if ($is_submission) {
+                // Submission ohne checksum validation - wie bisher filtern
+                $this->logger->debug("filterNewFeedbackFiles: '$filename' matches existing submission '$matched_submission' - FILTERED OUT");
+                continue;
+            }
+
+            // Neue Feedback-Datei
+            $this->logger->debug("filterNewFeedbackFiles: '$filename' is NEW feedback file - ADDED");
+            $new_files[] = $file;
         }
 
         $this->logger->debug("filterNewFeedbackFiles: Result: " . count($new_files) . " new feedback files");
 
         return $new_files;
+    }
+
+    /**
+     * Prüft ob eine Datei im Vergleich zur Original-Submission modifiziert wurde
+     */
+    private function checkIfFileModified(array $file, array $checksums): bool
+    {
+        $file_path = $file['path'];
+        $original_path = $file['original_path'];
+
+        // Finde den Checksum-Eintrag für diese Datei
+        // Der Pfad in checksums.json entspricht dem original_path
+        if (!isset($checksums[$original_path])) {
+            $this->logger->debug("checkIfFileModified: No checksum found for '$original_path' - treating as unmodified");
+            return false;
+        }
+
+        $stored_checksum = $checksums[$original_path]['md5'] ?? null;
+
+        if (!$stored_checksum) {
+            $this->logger->debug("checkIfFileModified: No MD5 in checksum data for '$original_path'");
+            return false;
+        }
+
+        if (!file_exists($file_path)) {
+            $this->logger->warning("checkIfFileModified: File does not exist: '$file_path'");
+            return false;
+        }
+
+        $current_hash = md5_file($file_path);
+
+        if ($current_hash !== $stored_checksum) {
+            $this->logger->info("checkIfFileModified: File '$original_path' was MODIFIED (hash mismatch)");
+            $this->logger->debug("checkIfFileModified: Original hash: $stored_checksum, Current hash: $current_hash");
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Benennt eine modifizierte Submission-Datei um
+     * @return array Modified file array mit neuem filename
+     */
+    private function renameModifiedSubmission(array $file): array
+    {
+        $original_filename = $file['filename'];
+
+        // Extrahiere Name und Extension
+        $pathinfo = pathinfo($original_filename);
+        $basename = $pathinfo['filename'];
+        $extension = isset($pathinfo['extension']) ? '.' . $pathinfo['extension'] : '';
+
+        // Neuer Name: Original_korrigiert.ext
+        $new_filename = $basename . '_korrigiert' . $extension;
+
+        // Track für Upload-Response
+        $this->renamed_files[] = [
+            'original' => $original_filename,
+            'renamed' => $new_filename,
+            'original_path' => $file['original_path']
+        ];
+
+        // Erstelle neue File-Array mit neuem Namen
+        $renamed_file = $file;
+        $renamed_file['filename'] = $new_filename;
+        $renamed_file['was_renamed'] = true;
+        $renamed_file['original_filename'] = $original_filename;
+
+        return $renamed_file;
     }
     
     /**
@@ -997,6 +1095,12 @@ class ilExFeedbackUploadHandler
      */
     private function setProcessingSuccess(int $assignment_id, int $tutor_id): void
     {
+        // Füge renamed files zu den stats hinzu
+        if (!empty($this->renamed_files)) {
+            $this->processing_stats['renamed_files'] = $this->renamed_files;
+            $this->processing_stats['renamed_count'] = count($this->renamed_files);
+        }
+
         $_SESSION['exc_status_files_processed'][$assignment_id][$tutor_id] = time();
         $_SESSION['exc_status_files_stats'][$assignment_id][$tutor_id] = $this->processing_stats;
     }
