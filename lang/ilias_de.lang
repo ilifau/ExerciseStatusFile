@@ -168,7 +168,9 @@ readme_structure_submissions#:#Abgabe-Files
 readme_workflow_step1#:#Status bearbeiten
 readme_workflow_step1_desc#:#Öffne %s oder %s
 readme_workflow_step2#:#Feedback hinzufügen
-readme_workflow_step2_desc#:#Lege Feedback-Files in die entsprechenden User-Ordner
+readme_workflow_step2_desc#:#Legen Sie Feedback-Files in die entsprechenden User-Ordner
+readme_workflow_step2_warning#:#⚠️ WICHTIG: Feedback-Dateien müssen ANDERE Namen haben als die Submissions! Dateien mit identischen Namen werden automatisch gefiltert und nicht als Feedback hochgeladen.
+readme_workflow_step2_example#:#Beispiel: Student hat "Aufgabe1.java" abgegeben → Legen Sie "Aufgabe1_korrigiert.java" oder "Feedback.pdf" als Feedback ab (NICHT "Aufgabe1.java").
 readme_workflow_step3#:#Re-Upload
 readme_workflow_step3_desc#:#ZIP komplett wieder hochladen
 readme_member#:#Mitglied

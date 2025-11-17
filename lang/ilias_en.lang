@@ -169,6 +169,8 @@ readme_workflow_step1#:#Edit status
 readme_workflow_step1_desc#:#Open %s or %s
 readme_workflow_step2#:#Add feedback
 readme_workflow_step2_desc#:#Place feedback files in the corresponding user folders
+readme_workflow_step2_warning#:#⚠️ IMPORTANT: Feedback files must have DIFFERENT names than the submissions! Files with identical names will be automatically filtered and NOT uploaded as feedback.
+readme_workflow_step2_example#:#Example: Student submitted "Assignment1.java" → Place "Assignment1_corrected.java" or "Feedback.pdf" as feedback (NOT "Assignment1.java").
 readme_workflow_step3#:#Re-upload
 readme_workflow_step3_desc#:#Upload complete ZIP again
 readme_member#:#Member

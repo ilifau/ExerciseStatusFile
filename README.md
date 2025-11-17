@@ -64,10 +64,20 @@ php setup/setup.php update
 
 1. **ZIP entpacken**
 2. **Feedback-Dateien hinzufügen:**
-   - Lege neue Dateien in die User-Ordner
+   - Legen Sie neue Dateien in die User-Ordner
    - **WICHTIG:** Ordner-Namen NICHT ändern!
    - Format: `Lastname_Firstname_Login_ID/` für Individual
    - Format: `Team_X/Lastname_Firstname_Login_ID/` für Teams
+
+   ⚠️ **WICHTIG: Feedback-Dateien müssen ANDERE Namen haben als die Submissions!**
+
+   Dateien mit identischen Namen werden automatisch gefiltert und NICHT als Feedback hochgeladen.
+
+   **Beispiel:**
+   - ❌ **FALSCH:** Student hat `Aufgabe1.java` abgegeben → Sie legen ebenfalls `Aufgabe1.java` als Feedback ab
+     → Wird automatisch gefiltert (erkannt als Submission)
+   - ✅ **RICHTIG:** Student hat `Aufgabe1.java` abgegeben → Sie legen `Aufgabe1_korrigiert.java` oder `Feedback.pdf` als Feedback ab
+     → Wird als Feedback hochgeladen
 
 3. **Status bearbeiten (optional):**
    - Öffne `status.xlsx` oder `status.csv`
