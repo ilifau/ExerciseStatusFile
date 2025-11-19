@@ -71,6 +71,7 @@ file_size_bytes#:#Bytes
 file_size_kb#:#KB
 file_size_mb#:#MB
 file_size_gb#:#GB
+file_info_name#:#Name
 file_info_size#:#Größe
 file_info_type#:#Typ
 file_info_modified#:#Geändert
