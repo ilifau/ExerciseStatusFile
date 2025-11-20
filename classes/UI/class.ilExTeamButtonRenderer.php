@@ -1640,5 +1640,245 @@ class ilExTeamButtonRenderer
             }
         ');
     }
+
+    /**
+     * Render Integration Test Button (Admin only)
+     */
+    public function renderIntegrationTestButton(): void
+    {
+        global $DIC;
+
+        // Security check
+        if (!$DIC->rbac()->system()->checkAccess('visible', 9)) {
+            return; // Not admin
+        }
+
+        $this->template->addOnLoadCode("
+            setTimeout(function() {
+                // Check if button already exists
+                if (document.querySelector('input[value=\"🧪 Run Tests\"]')) {
+                    return; // Already rendered
+                }
+
+                // Find the target container (same as Multi-Feedback button)
+                var targetContainer = null;
+                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+
+                for (var i = 0; i < allButtons.length; i++) {
+                    var btn = allButtons[i];
+                    if (btn.value && (btn.value.includes('Einzelteams') || btn.value.includes('herunterladen') || btn.value.includes('Multi-Feedback'))) {
+                        targetContainer = btn.parentNode;
+                        break;
+                    }
+                }
+
+                if (targetContainer) {
+                    // Create test button
+                    var testBtn = document.createElement('input');
+                    testBtn.type = 'button';
+                    testBtn.value = '🧪 Run Tests';
+                    testBtn.title = 'Run Integration Tests (Admin only)';
+                    testBtn.style.cssText = 'margin-left: 10px; background: #ffc107; color: #000; border: 1px solid #ffc107; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-weight: bold;';
+
+                    testBtn.onclick = function() {
+                        // Create modal with options
+                        var modal = document.createElement('div');
+                        modal.id = 'integration-test-modal';
+                        modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; overflow: auto;';
+
+                        modal.innerHTML = '<div style=\"max-width: 1200px; margin: 50px auto; background: #1e1e1e; color: #d4d4d4; border-radius: 8px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">' +
+                            // Header
+                            '<div style=\"display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #4ec9b0; padding-bottom: 15px;\">' +
+                                '<h2 style=\"color: #4ec9b0; margin: 0;\">🧪 Integration Tests</h2>' +
+                                '<button id=\"close-test-modal\" style=\"background: #d73a49; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;\">✕ Schließen</button>' +
+                            '</div>' +
+
+                            // Options panel
+                            '<div id=\"test-options\" style=\"background: #252526; padding: 20px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #3c3c3c;\">' +
+                                '<h3 style=\"color: #569cd6; margin-top: 0;\">Test-Optionen</h3>' +
+                                '<div style=\"margin-bottom: 15px;\">' +
+                                    '<label style=\"display: flex; align-items: center; cursor: pointer;\">' +
+                                        '<input type=\"radio\" name=\"cleanup-mode\" value=\"cleanup\" checked style=\"margin-right: 10px; cursor: pointer;\">' +
+                                        '<span><strong>🧹 Mit Cleanup</strong> - Alle Test-Daten werden nach den Tests gelöscht (empfohlen für CI/CD)</span>' +
+                                    '</label>' +
+                                '</div>' +
+                                '<div style=\"margin-bottom: 15px;\">' +
+                                    '<label style=\"display: flex; align-items: center; cursor: pointer;\">' +
+                                        '<input type=\"radio\" name=\"cleanup-mode\" value=\"keep\" style=\"margin-right: 10px; cursor: pointer;\">' +
+                                        '<span><strong>💾 Ohne Cleanup</strong> - Test-Daten bleiben erhalten für manuelle Inspektion in der GUI</span>' +
+                                    '</label>' +
+                                '</div>' +
+                                '<div style=\"background: #1e3a5f; padding: 10px; border-left: 4px solid #569cd6; border-radius: 4px; margin-top: 15px;\">' +
+                                    '<strong>ℹ️ Info:</strong> Mit \"Ohne Cleanup\" kannst du die erstellten Übungen in der GUI ansehen und deiner Teamleitung zeigen.' +
+                                '</div>' +
+                            '</div>' +
+
+                            // Buttons
+                            '<div style=\"text-align: center; margin-bottom: 20px; display: flex; gap: 10px; justify-content: center;\">' +
+                                '<button id=\"start-tests-btn\" style=\"background: #28a745; color: white; border: none; padding: 12px 40px; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold;\">▶️ Tests starten</button>' +
+                                '<button id=\"cleanup-only-btn\" style=\"background: #d73a49; color: white; border: none; padding: 12px 40px; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold;\">🗑️ Nur Cleanup</button>' +
+                            '</div>' +
+
+                            // Output area (initially hidden)
+                            '<div id=\"test-output-container\" style=\"display: none;\">' +
+                                '<h3 style=\"color: #569cd6;\">Test-Ausgabe:</h3>' +
+                                '<pre id=\"test-output\" style=\"background: #252526; padding: 20px; border-radius: 4px; max-height: 600px; overflow-y: auto; font-family: monospace; line-height: 1.5; white-space: pre-wrap; border: 1px solid #3c3c3c;\"></pre>' +
+                                '<div id=\"test-links\" style=\"margin-top: 20px; padding: 15px; background: #1a3d1a; border-left: 4px solid #4ec9b0; border-radius: 4px; display: none;\">' +
+                                    '<h4 style=\"color: #4ec9b0; margin-top: 0;\">📋 Erstellte Übungen:</h4>' +
+                                    '<div id=\"exercise-links\" style=\"font-family: monospace;\"></div>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>';
+
+                        document.body.appendChild(modal);
+
+                        var output = document.getElementById('test-output');
+                        var outputContainer = document.getElementById('test-output-container');
+                        var testLinks = document.getElementById('test-links');
+                        var exerciseLinks = document.getElementById('exercise-links');
+                        var closeBtn = document.getElementById('close-test-modal');
+                        var startBtn = document.getElementById('start-tests-btn');
+                        var cleanupOnlyBtn = document.getElementById('cleanup-only-btn');
+                        var optionsPanel = document.getElementById('test-options');
+                        var createdExercises = [];
+
+                        closeBtn.onclick = function() {
+                            modal.remove();
+                        };
+
+                        // Cleanup-only button handler
+                        cleanupOnlyBtn.onclick = function() {
+                            if (!confirm('Möchtest du wirklich ALLE Test-Daten löschen?\\n\\nDies löscht:\\n• Alle Übungen mit \"TEST_Exercise\" im Namen\\n• Alle User mit \"test_user\" im Namen\\n\\nDieser Vorgang kann nicht rückgängig gemacht werden!')) {
+                                return;
+                            }
+
+                            // Hide options and show output
+                            optionsPanel.style.display = 'none';
+                            startBtn.style.display = 'none';
+                            cleanupOnlyBtn.style.display = 'none';
+                            outputContainer.style.display = 'block';
+                            output.textContent = 'Starte Cleanup...\\n';
+
+                            // Run cleanup via AJAX
+                            var url = window.location.href;
+                            var separator = url.indexOf('?') > -1 ? '&' : '?';
+
+                            fetch(url + separator + 'plugin_action=cleanup_test_data', {
+                                method: 'GET'
+                            })
+                            .then(response => {
+                                const reader = response.body.getReader();
+                                const decoder = new TextDecoder();
+
+                                function read() {
+                                    reader.read().then(({done, value}) => {
+                                        if (done) {
+                                            output.textContent += '\\n\\n✅ Cleanup abgeschlossen!';
+                                            return;
+                                        }
+
+                                        const text = decoder.decode(value, {stream: true});
+                                        output.textContent += text;
+                                        output.scrollTop = output.scrollHeight;
+
+                                        read();
+                                    });
+                                }
+
+                                read();
+                            })
+                            .catch(error => {
+                                output.textContent += '\\n\\n❌ Error: ' + error.message;
+                            });
+                        };
+
+                        modal.onclick = function(e) {
+                            if (e.target === modal) {
+                                modal.remove();
+                            }
+                        };
+
+                        startBtn.onclick = function() {
+                            // Get selected cleanup mode
+                            var cleanupMode = document.querySelector('input[name=\"cleanup-mode\"]:checked').value;
+                            var keepData = (cleanupMode === 'keep');
+
+                            // Hide options and show output
+                            optionsPanel.style.display = 'none';
+                            startBtn.style.display = 'none';
+                            outputContainer.style.display = 'block';
+                            output.textContent = 'Starting tests...\\n';
+
+                            // Start tests via AJAX
+                            var url = window.location.href;
+                            var separator = url.indexOf('?') > -1 ? '&' : '?';
+                            var testUrl = url + separator + 'plugin_action=run_integration_tests';
+
+                            if (keepData) {
+                                testUrl += '&keep_data=1';
+                            }
+
+                            fetch(testUrl, {
+                                method: 'GET'
+                            })
+                            .then(response => {
+                                const reader = response.body.getReader();
+                                const decoder = new TextDecoder();
+
+                                function read() {
+                                    reader.read().then(({done, value}) => {
+                                        if (done) {
+                                            output.textContent += '\\n\\n✅ Tests completed!';
+
+                                            // Show links if data was kept
+                                            if (keepData && createdExercises.length > 0) {
+                                                testLinks.style.display = 'block';
+                                                var linksHtml = createdExercises.map(function(ex) {
+                                                    return '✓ <a href=\"goto.php?target=exc_' + ex.refId + '\" target=\"_blank\" style=\"color: #4ec9b0; text-decoration: underline;\">' + ex.title + ' (RefID: ' + ex.refId + ')</a>';
+                                                }).join('<br>');
+                                                exerciseLinks.innerHTML = linksHtml;
+                                            }
+                                            return;
+                                        }
+
+                                        const text = decoder.decode(value, {stream: true});
+                                        output.textContent += text;
+                                        output.scrollTop = output.scrollHeight;
+
+                                        // Parse for exercise creation (extract RefID from output)
+                                        // Pattern: 📋 Übung erstellt: 'TEST_Exercise_...' (RefID: 12345)
+                                        var matches = text.match(/📋 Übung erstellt: '([^']+)' \(RefID: (\d+)\)/g);
+                                        if (matches) {
+                                            matches.forEach(function(match) {
+                                                var detailMatch = match.match(/📋 Übung erstellt: '([^']+)' \(RefID: (\d+)\)/);
+                                                if (detailMatch) {
+                                                    var title = detailMatch[1];
+                                                    var refId = detailMatch[2];
+                                                    // Check if not already added
+                                                    var exists = createdExercises.some(function(ex) { return ex.refId === refId; });
+                                                    if (!exists) {
+                                                        createdExercises.push({refId: refId, title: title});
+                                                    }
+                                                }
+                                            });
+                                        }
+
+                                        read();
+                                    });
+                                }
+
+                                read();
+                            })
+                            .catch(error => {
+                                output.textContent += '\\n\\n❌ Error: ' + error.message;
+                            });
+                        };
+                    };
+
+                    targetContainer.appendChild(testBtn);
+                }
+            }, 100); // Small delay to ensure Multi-Feedback button is rendered first
+        ");
+    }
 }
 ?>

@@ -112,12 +112,15 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
      */
     private function handleAJAXRequests(): bool
     {
-        $is_ajax_get = isset($_SERVER['HTTP_X_REQUESTED_WITH']) && 
-                       $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest' &&
-                       $_SERVER['REQUEST_METHOD'] === 'GET';
-        
+        // Accept AJAX GET requests with X-Requested-With header OR plugin_action parameter
+        $is_ajax_get = ($_SERVER['REQUEST_METHOD'] === 'GET') &&
+                       (
+                           (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest') ||
+                           isset($_GET['plugin_action'])
+                       );
+
         $is_ajax_post = isset($_POST['plugin_action']);
-        
+
         if (!$is_ajax_get && !$is_ajax_post) {
             return false;
         }
@@ -143,6 +146,14 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
 
             case 'multi_feedback_download_individual':
                 $this->handleMultiFeedbackDownloadIndividualRequest();
+                return true;
+
+            case 'run_integration_tests':
+                $this->handleRunIntegrationTestsRequest();
+                return true;
+
+            case 'cleanup_test_data':
+                $this->handleCleanupTestDataRequest();
                 return true;
 
             default:
@@ -330,7 +341,10 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 // Individual Assignment -> Individual Multi-Feedback Button
                 $renderer->renderIndividualButton($assignment_id);
             }
-            
+
+            // Admin-only: Integration Test Button (rendered by renderer)
+            $renderer->renderIntegrationTestButton();
+
         } catch (Exception $e) {
             $this->logger->error("UI rendering error: " . $e->getMessage());
         }
@@ -527,6 +541,187 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 'message' => "Fehler beim Individual Multi-Feedback-Download: " . $e->getMessage()
             ], JSON_UNESCAPED_UNICODE);
 
+            exit;
+        }
+    }
+
+    /**
+     * Integration Tests Runner (Admin only)
+     */
+    private function handleRunIntegrationTestsRequest(): void
+    {
+        global $DIC;
+
+        // Security: Only allow for administrators
+        if (!$DIC->rbac()->system()->checkAccess('visible', 9)) { // SYSTEM_FOLDER_ID
+            header('Content-Type: application/json; charset=utf-8');
+            header('HTTP/1.1 403 Forbidden');
+            echo json_encode(['error' => 'Insufficient permissions']);
+            exit;
+        }
+
+        try {
+            // Set headers for streaming output
+            header('Content-Type: text/plain; charset=utf-8');
+            header('X-Accel-Buffering: no');
+            ob_implicit_flush(true);
+            @ini_set('output_buffering', 'off');
+            @ini_set('zlib.output_compression', 0);
+
+            // Note: Template not initialized for test context
+            // Tests will create data but skip actual file operations that need template
+
+            // Load test components
+            require_once __DIR__ . '/../tests/integration/TestHelper.php';
+            require_once __DIR__ . '/../tests/integration/test-runner-core.php';
+
+            echo "═══════════════════════════════════════════════════════\n";
+            echo "  Integration Tests - Multi-Feedback Plugin\n";
+            echo "═══════════════════════════════════════════════════════\n\n";
+
+            echo "User: " . $DIC->user()->getLogin() . " (ID: " . $DIC->user()->getId() . ")\n";
+
+            // Check if keep_data parameter is set
+            $keep_data = isset($_GET['keep_data']) && $_GET['keep_data'] == '1';
+
+            if ($keep_data) {
+                echo "Mode: 💾 Test-Daten werden NICHT gelöscht\n";
+            } else {
+                echo "Mode: 🧹 Test-Daten werden nach Tests gelöscht\n";
+            }
+
+            echo "Starting tests...\n\n";
+
+            $start_time = microtime(true);
+
+            // Run tests
+            $runner = new IntegrationTestRunner();
+            $runner->runAll($keep_data);
+
+            $duration = round(microtime(true) - $start_time, 2);
+
+            echo "\n═══════════════════════════════════════════════════════\n";
+            echo "  Tests completed in {$duration}s\n";
+            echo "═══════════════════════════════════════════════════════\n";
+
+            exit;
+
+        } catch (Exception $e) {
+            echo "\n\n❌ FATAL ERROR:\n";
+            echo $e->getMessage() . "\n\n";
+            echo "Stack Trace:\n";
+            echo $e->getTraceAsString() . "\n";
+            exit;
+        }
+    }
+
+    /**
+     * Handle cleanup of all test data
+     */
+    private function handleCleanupTestDataRequest(): void
+    {
+        global $DIC;
+
+        // Security: Only allow for administrators
+        if (!$DIC->rbac()->system()->checkAccess('visible', 9)) {
+            header('Content-Type: application/json; charset=utf-8');
+            header('HTTP/1.1 403 Forbidden');
+            echo json_encode(['error' => 'Insufficient permissions']);
+            exit;
+        }
+
+        try {
+            // Set headers for streaming output
+            header('Content-Type: text/plain; charset=utf-8');
+            header('X-Accel-Buffering: no');
+            ob_implicit_flush(true);
+            @ini_set('output_buffering', 'off');
+            @ini_set('zlib.output_compression', 0);
+
+            echo "═══════════════════════════════════════════════════════\n";
+            echo "  Test-Daten Cleanup\n";
+            echo "═══════════════════════════════════════════════════════\n\n";
+
+            echo "Suche nach Test-Daten...\n\n";
+
+            $db = $DIC->database();
+            $deleted_exercises = 0;
+            $deleted_users = 0;
+
+            // Find and delete test exercises
+            echo "🔍 Suche Test-Übungen (mit 'TEST_Exercise' im Namen)...\n";
+            $query = "SELECT od.obj_id, oref.ref_id, od.title FROM object_data od
+                      JOIN object_reference oref ON od.obj_id = oref.obj_id
+                      WHERE od.type = 'exc'
+                      AND od.title LIKE '%TEST_Exercise%'
+                      AND oref.deleted IS NULL";
+            $result = $db->query($query);
+
+            $exercises = [];
+            while ($row = $db->fetchAssoc($result)) {
+                $exercises[] = $row;
+            }
+
+            echo "   → Gefunden: " . count($exercises) . " Test-Übungen\n\n";
+
+            foreach ($exercises as $ex) {
+                try {
+                    // Delete from object_reference
+                    $db->manipulate("DELETE FROM object_reference WHERE ref_id = " . $db->quote($ex['ref_id'], 'integer'));
+                    // Delete from object_data
+                    $db->manipulate("DELETE FROM object_data WHERE obj_id = " . $db->quote($ex['obj_id'], 'integer'));
+
+                    echo "   ✓ Gelöscht: {$ex['title']} (RefID: {$ex['ref_id']}, ObjID: {$ex['obj_id']})\n";
+                    $deleted_exercises++;
+                } catch (Exception $e) {
+                    echo "   ✗ Fehler bei {$ex['title']}: " . $e->getMessage() . "\n";
+                }
+            }
+
+            echo "\n";
+
+            // Find and delete test users
+            echo "🔍 Suche Test-User (mit 'test_user' im Login)...\n";
+            $query = "SELECT usr_id, login, firstname, lastname FROM usr_data
+                      WHERE login LIKE '%test_user%'";
+            $result = $db->query($query);
+
+            $users = [];
+            while ($row = $db->fetchAssoc($result)) {
+                $users[] = $row;
+            }
+
+            echo "   → Gefunden: " . count($users) . " Test-User\n\n";
+
+            foreach ($users as $user) {
+                try {
+                    // Delete from usr_data
+                    $db->manipulate("DELETE FROM usr_data WHERE usr_id = " . $db->quote($user['usr_id'], 'integer'));
+                    // Delete from object_data
+                    $db->manipulate("DELETE FROM object_data WHERE obj_id = " . $db->quote($user['usr_id'], 'integer'));
+
+                    echo "   ✓ Gelöscht: {$user['login']} - {$user['firstname']} {$user['lastname']} (ID: {$user['usr_id']})\n";
+                    $deleted_users++;
+                } catch (Exception $e) {
+                    echo "   ✗ Fehler bei {$user['login']}: " . $e->getMessage() . "\n";
+                }
+            }
+
+            echo "\n═══════════════════════════════════════════════════════\n";
+            echo "  Cleanup abgeschlossen!\n";
+            echo "═══════════════════════════════════════════════════════\n\n";
+            echo "Zusammenfassung:\n";
+            echo "  • Übungen gelöscht: $deleted_exercises\n";
+            echo "  • User gelöscht: $deleted_users\n";
+            echo "═══════════════════════════════════════════════════════\n";
+
+            exit;
+
+        } catch (Exception $e) {
+            echo "\n\n❌ FATAL ERROR:\n";
+            echo $e->getMessage() . "\n\n";
+            echo "Stack Trace:\n";
+            echo $e->getTraceAsString() . "\n";
             exit;
         }
     }

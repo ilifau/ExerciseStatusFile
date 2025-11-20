@@ -76,8 +76,8 @@ class ilExFeedbackUploadHandler
             $this->validateZipForAssignment($temp_zip, $assignment_id);
 
             $extracted_files = $this->extractZipContents($temp_zip, 'team_extract');
-            $status_files = $this->findStatusFiles($extracted_files);
             $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
+            $status_files = $this->findStatusFiles($extracted_files, $checksums);
 
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
@@ -117,8 +117,8 @@ class ilExFeedbackUploadHandler
             $this->validateZipForAssignment($temp_zip, $assignment_id);
 
             $extracted_files = $this->extractZipContents($temp_zip, 'individual_extract');
-            $status_files = $this->findStatusFiles($extracted_files);
             $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
+            $status_files = $this->findStatusFiles($extracted_files, $checksums);
 
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
@@ -356,22 +356,103 @@ class ilExFeedbackUploadHandler
     }
     
     /**
-     * Findet Status-Files in extrahierten Dateien
+     * Findet Status-Files im entpackten ZIP mit intelligenter Auswahl
+     *
+     * Logik:
+     * - Wenn nur status.xlsx geändert wurde -> verwende xlsx
+     * - Wenn nur status.csv geändert wurde -> verwende csv
+     * - Wenn beide geändert wurden -> verwende xlsx und zeige Warnung
+     * - Wenn keine geändert wurde -> verwende xlsx (falls vorhanden)
+     *
+     * @param array $extracted_files Die extrahierten Dateien
+     * @param array $checksums Checksums aus checksums.json
+     * @return array Liste der zu verarbeitenden Status-Files (immer max. 1 File)
      */
-    private function findStatusFiles(array $extracted_files): array
+    private function findStatusFiles(array $extracted_files, array $checksums): array
     {
-        $status_files = [];
+        $xlsx_file = null;
+        $csv_file = null;
 
+        // Suche nach status.xlsx und status.csv
         foreach ($extracted_files as $file) {
             $basename = basename($file['original_name']);
 
-            if (in_array($basename, ['status.xlsx', 'status.csv', 'status.xls']) ||
-                in_array($basename, ['batch_status.xlsx', 'batch_status.csv'])) {
-                $status_files[] = $file['extracted_path'];
+            if ($basename === 'status.xlsx') {
+                $xlsx_file = $file;
+            } elseif ($basename === 'status.csv') {
+                $csv_file = $file;
             }
         }
 
-        return $status_files;
+        // Keine Status-Files gefunden
+        if (!$xlsx_file && !$csv_file) {
+            return [];
+        }
+
+        // Prüfe welche Datei(en) geändert wurden
+        $xlsx_modified = false;
+        $csv_modified = false;
+
+        if ($xlsx_file && !empty($checksums)) {
+            $xlsx_modified = $this->isFileModified($xlsx_file, $checksums);
+        }
+
+        if ($csv_file && !empty($checksums)) {
+            $csv_modified = $this->isFileModified($csv_file, $checksums);
+        }
+
+        // Entscheidungslogik
+        if ($xlsx_modified && $csv_modified) {
+            // BEIDE geändert -> xlsx verwenden aber Warnung
+            $this->logger->warning(
+                "Both status.xlsx and status.csv were modified. Using status.xlsx. " .
+                "Please modify only ONE status file per upload."
+            );
+            return [$xlsx_file['extracted_path']];
+
+        } elseif ($xlsx_modified) {
+            // Nur xlsx geändert
+            return [$xlsx_file['extracted_path']];
+
+        } elseif ($csv_modified) {
+            // Nur csv geändert
+            return [$csv_file['extracted_path']];
+
+        } else {
+            // Keine Änderungen oder keine Checksums vorhanden
+            if ($xlsx_file) {
+                return [$xlsx_file['extracted_path']];
+            } elseif ($csv_file) {
+                return [$csv_file['extracted_path']];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Prüft ob eine Datei geändert wurde (Checksum-Vergleich)
+     *
+     * @param array $file File-Info Array mit 'extracted_path' und 'original_name'
+     * @param array $checksums Checksums aus checksums.json
+     * @return bool True wenn Datei geändert wurde
+     */
+    private function isFileModified(array $file, array $checksums): bool
+    {
+        if (!file_exists($file['extracted_path'])) {
+            return false;
+        }
+
+        $current_checksum = hash_file('sha256', $file['extracted_path']);
+        $original_name = $file['original_name'];
+
+        // Checksums sind nach original_name indiziert
+        if (isset($checksums[$original_name])) {
+            return $current_checksum !== $checksums[$original_name];
+        }
+
+        // Kein Checksum gefunden -> als geändert betrachten
+        return true;
     }
 
     /**
@@ -807,9 +888,6 @@ class ilExFeedbackUploadHandler
                     $file_path = $file_data['path'];
                     $filename = $file_data['filename'];
 
-                    // DEBUG: Log actual filename being uploaded
-                    $this->logger->info("addFeedbackFilesViaResourceStorage: Uploading file with filename='$filename' (path: $file_path)");
-
                     if (!file_exists($file_path)) {
                         $this->logger->warning("Feedback file does not exist: $file_path");
                         continue;
@@ -872,9 +950,6 @@ class ilExFeedbackUploadHandler
             try {
                 $file_path = $file_data['path'];
                 $filename = $file_data['filename'];
-
-                // DEBUG: Log actual filename being uploaded
-                $this->logger->info("addFeedbackFilesViaFilesystem: Uploading file with filename='$filename' (path: $file_path)");
 
                 if (!file_exists($file_path)) {
                     $this->logger->warning("Feedback file does not exist: $file_path");

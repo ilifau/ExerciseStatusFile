@@ -1,0 +1,4 @@
+# Ignore test artifacts
+*.log
+test-results/
+temp/
