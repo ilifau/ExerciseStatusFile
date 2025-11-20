@@ -1472,14 +1472,21 @@ class ilExTeamButtonRenderer
     public function renderTeamButton(int $assignment_id): void
     {
         $btn_text = addslashes($this->plugin->txt('btn_multi_feedback'));
-        
+
+        // ============================================================
+        // INSTANT BUTTON RENDERING - KANN LEICHT ENTFERNT WERDEN
+        // Ändere setTimeout(500) -> 0 für instant rendering
+        // Um zu revertieren: ändere zurück zu 500
+        // ============================================================
+        $instant_delay = 0;  // War: 500ms - Jetzt: 0ms (instant)
+
         $this->template->addOnLoadCode("
             setTimeout(function() {
                 window.ExerciseStatusFilePlugin.removeExistingPluginBox();
-                
+
                 var targetContainer = null;
                 var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
-                
+
                 for (var i = 0; i < allButtons.length; i++) {
                     var btn = allButtons[i];
                     if (btn.value && (btn.value.includes('Einzelteams') || btn.value.includes('herunterladen'))) {
@@ -1487,13 +1494,13 @@ class ilExTeamButtonRenderer
                         break;
                     }
                 }
-                
+
                 if (targetContainer) {
                     var multiFeedbackBtn = document.createElement('input');
                     multiFeedbackBtn.type = 'button';
                     multiFeedbackBtn.value = '{$btn_text}';
                     multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
-                    
+
                     var existingButton = targetContainer.querySelector('input[type=\"submit\"], input[type=\"button\"]');
                     if (existingButton && existingButton.className) {
                         multiFeedbackBtn.className = existingButton.className;
@@ -1501,14 +1508,14 @@ class ilExTeamButtonRenderer
                         multiFeedbackBtn.style.borderColor = '#4c6586';
                         multiFeedbackBtn.style.color = 'white';
                     }
-                    
+
                     multiFeedbackBtn.onclick = function() {
                         window.ExerciseStatusFilePlugin.startTeamMultiFeedback($assignment_id);
                     };
-                    
+
                     targetContainer.appendChild(multiFeedbackBtn);
                 }
-            }, 500);
+            }, {$instant_delay});
         ");
     }
 
@@ -1518,14 +1525,21 @@ class ilExTeamButtonRenderer
     public function renderIndividualButton(int $assignment_id): void
     {
         $btn_text = addslashes($this->plugin->txt('btn_multi_feedback'));
-        
+
+        // ============================================================
+        // INSTANT BUTTON RENDERING - KANN LEICHT ENTFERNT WERDEN
+        // Ändere setTimeout(500) -> 0 für instant rendering
+        // Um zu revertieren: ändere zurück zu 500
+        // ============================================================
+        $instant_delay = 0;  // War: 500ms - Jetzt: 0ms (instant)
+
         $this->template->addOnLoadCode("
             setTimeout(function() {
                 window.ExerciseStatusFilePlugin.removeExistingPluginBox();
-                
+
                 var targetContainer = null;
                 var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
-                
+
                 for (var i = 0; i < allButtons.length; i++) {
                     var btn = allButtons[i];
                     if (btn.value && (btn.value.includes('herunterladen') || btn.value.includes('Download'))) {
@@ -1533,13 +1547,13 @@ class ilExTeamButtonRenderer
                         break;
                     }
                 }
-                
+
                 if (targetContainer) {
                     var multiFeedbackBtn = document.createElement('input');
                     multiFeedbackBtn.type = 'button';
                     multiFeedbackBtn.value = '{$btn_text}';
                     multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
-                    
+
                     var existingButton = targetContainer.querySelector('input[type=\"submit\"], input[type=\"button\"]');
                     if (existingButton && existingButton.className) {
                         multiFeedbackBtn.className = existingButton.className;
@@ -1551,10 +1565,10 @@ class ilExTeamButtonRenderer
                     multiFeedbackBtn.onclick = function() {
                         window.ExerciseStatusFilePlugin.startIndividualMultiFeedback($assignment_id);
                     };
-                    
+
                     targetContainer.appendChild(multiFeedbackBtn);
                 }
-            }, 500);
+            }, {$instant_delay});
         ");
     }
     

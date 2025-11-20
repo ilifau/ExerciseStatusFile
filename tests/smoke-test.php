@@ -36,6 +36,7 @@ class SmokeTests
         $this->testAssignmentDetection();
         $this->testChecksumFeature();
         $this->testSystemFileFiltering();
+        $this->testPerformanceOptimizations();
 
         echo "\n";
         echo "───────────────────────────────────────────────────────\n";
@@ -396,6 +397,72 @@ class SmokeTests
         $this->test(
             "User folder pattern matches expected format",
             fn() => strpos($upload_handler, '/\/[^\/]+_[^\/]+_[^\/]+_\d+\/[^\/]+$/') !== false
+        );
+    }
+
+    private function testPerformanceOptimizations(): void
+    {
+        echo "\n⚡ Performance Optimization Tests\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        $user_provider = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExUserDataProvider.php');
+
+        $this->test(
+            "Batch user data loading method exists",
+            fn() => strpos($user_provider, 'function getUserDataBatch') !== false
+        );
+
+        $this->test(
+            "Batch user data uses single query with IN clause",
+            fn() => strpos($user_provider, '$this->db->in(\'usr_id\', $user_ids') !== false &&
+                    strpos($user_provider, 'getUserDataBatch') !== false
+        );
+
+        $this->test(
+            "Batch submission check method exists",
+            fn() => strpos($user_provider, 'function checkSubmissionsExistBatch') !== false
+        );
+
+        $this->test(
+            "Batch submission check uses single query",
+            fn() => strpos($user_provider, 'FROM exc_returned') !== false &&
+                    strpos($user_provider, 'GROUP BY user_id') !== false &&
+                    strpos($user_provider, 'checkSubmissionsExistBatch') !== false
+        );
+
+        $this->test(
+            "Batch user status loading method exists",
+            fn() => strpos($user_provider, 'function getUserStatusesBatch') !== false
+        );
+
+        $this->test(
+            "Batch user status uses single query",
+            fn() => strpos($user_provider, 'FROM exc_mem_ass_status') !== false &&
+                    strpos($user_provider, 'getUserStatusesBatch') !== false
+        );
+
+        $this->test(
+            "Optimized user data builder method exists",
+            fn() => strpos($user_provider, 'function buildUserDataOptimized') !== false
+        );
+
+        $this->test(
+            "Main method uses batch loading (N+1 fix)",
+            fn() => strpos($user_provider, '$users_data_map = $this->getUserDataBatch') !== false &&
+                    strpos($user_provider, '$submissions_map = $this->checkSubmissionsExistBatch') !== false &&
+                    strpos($user_provider, '$statuses_map = $this->getUserStatusesBatch') !== false
+        );
+
+        $this->test(
+            "Gzip compression for AJAX responses",
+            fn() => strpos($user_provider, 'ob_gzhandler') !== false &&
+                    strpos($user_provider, 'generateJSONResponse') !== false
+        );
+
+        $this->test(
+            "JSON response includes proper headers",
+            fn() => strpos($user_provider, 'Content-Type: application/json') !== false &&
+                    strpos($user_provider, 'Cache-Control: no-cache') !== false
         );
     }
 
