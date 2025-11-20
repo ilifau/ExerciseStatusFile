@@ -68,22 +68,37 @@ class ilExTeamDataProvider
             if (!$assignment->getAssignmentType()->usesTeams()) {
                 return [];
             }
-            
+
             $teams = ilExAssignmentTeam::getInstancesFromMap($assignment_id);
             if (empty($teams)) {
                 return [];
             }
-            
+
+            // PERFORMANCE: Sammle zuerst alle User-IDs aus allen Teams
+            $all_user_ids = [];
+            foreach ($teams as $team) {
+                $member_ids = $team->getMembers();
+                $all_user_ids = array_merge($all_user_ids, $member_ids);
+            }
+            $all_user_ids = array_unique($all_user_ids);
+
+            // PERFORMANCE: Lade alle User-Daten in 1 Query statt N Queries
+            $users_data_map = $this->getMemberDataBatch($all_user_ids);
+
+            // PERFORMANCE: Lade alle Status-Daten in 1 Query statt N Queries
+            $statuses_map = $this->getTeamStatusesBatch($assignment_id, $all_user_ids);
+
+            // Baue Team-Daten mit vorbereiten User-Daten
             $teams_data = [];
             foreach ($teams as $team_id => $team) {
-                $team_data = $this->buildTeamData($team, $assignment);
+                $team_data = $this->buildTeamDataOptimized($team, $assignment, $users_data_map, $statuses_map);
                 if ($team_data) {
                     $teams_data[] = $team_data;
                 }
             }
-            
+
             return $teams_data;
-            
+
         } catch (Exception $e) {
             $this->logger->error("Team data provider error: " . $e->getMessage());
             return [];
@@ -91,32 +106,42 @@ class ilExTeamDataProvider
     }
     
     /**
-     * Team-Daten erstellen
+     * Team-Daten erstellen (optimiert mit vorgeladenen User-Daten)
+     *
+     * @param array $users_data_map Vorgeladene User-Daten (user_id => data)
+     * @param array $statuses_map Vorgeladene Status-Daten (user_id => status)
      */
-    private function buildTeamData(ilExAssignmentTeam $team, \ilExAssignment $assignment): ?array
+    private function buildTeamDataOptimized(ilExAssignmentTeam $team, \ilExAssignment $assignment, array $users_data_map, array $statuses_map = []): ?array
     {
         try {
             $team_id = $team->getId();
             $member_ids = $team->getMembers();
-            
+
             if (empty($member_ids)) {
                 return null;
             }
-            
+
+            // PERFORMANCE: Nutze vorgeladene User-Daten statt einzelner Queries
             $members_data = [];
             foreach ($member_ids as $user_id) {
-                $member_data = $this->getMemberData($user_id);
-                if ($member_data) {
-                    $members_data[] = $member_data;
+                if (isset($users_data_map[$user_id])) {
+                    $members_data[] = $users_data_map[$user_id];
                 }
             }
-            
+
             if (empty($members_data)) {
                 return null;
             }
-            
-            $team_status = $this->getTeamStatus($team, $assignment);
-            
+
+            // PERFORMANCE: Nutze vorgeladene Status-Daten wenn verfügbar
+            $first_member_id = reset($member_ids);
+            if (!empty($statuses_map) && isset($statuses_map[$first_member_id])) {
+                $team_status = $statuses_map[$first_member_id];
+            } else {
+                // Fallback: Lade einzeln (Legacy)
+                $team_status = $this->getTeamStatus($team, $assignment);
+            }
+
             return [
                 'team_id' => $team_id,
                 'member_count' => count($members_data),
@@ -128,7 +153,52 @@ class ilExTeamDataProvider
                 'last_submission' => null,
                 'has_submissions' => false
             ];
-            
+
+        } catch (Exception $e) {
+            $this->logger->error("Error building team data for team " . $team->getId() . ": " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Team-Daten erstellen (Legacy - ohne Batch-Loading)
+     */
+    private function buildTeamData(ilExAssignmentTeam $team, \ilExAssignment $assignment): ?array
+    {
+        try {
+            $team_id = $team->getId();
+            $member_ids = $team->getMembers();
+
+            if (empty($member_ids)) {
+                return null;
+            }
+
+            $members_data = [];
+            foreach ($member_ids as $user_id) {
+                $member_data = $this->getMemberData($user_id);
+                if ($member_data) {
+                    $members_data[] = $member_data;
+                }
+            }
+
+            if (empty($members_data)) {
+                return null;
+            }
+
+            $team_status = $this->getTeamStatus($team, $assignment);
+
+            return [
+                'team_id' => $team_id,
+                'member_count' => count($members_data),
+                'members' => $members_data,
+                'status' => $team_status['status'],
+                'mark' => $team_status['mark'],
+                'notice' => $team_status['notice'],
+                'comment' => $team_status['comment'],
+                'last_submission' => null,
+                'has_submissions' => false
+            ];
+
         } catch (Exception $e) {
             $this->logger->error("Error building team data for team " . $team->getId() . ": " . $e->getMessage());
             return null;
@@ -136,7 +206,91 @@ class ilExTeamDataProvider
     }
     
     /**
-     * Mitglieder-Daten laden
+     * Batch-Laden von Mitglieder-Daten (Performance-Optimierung)
+     *
+     * @param array $user_ids Array von User-IDs
+     * @return array Assoziatives Array: user_id => user_data
+     */
+    private function getMemberDataBatch(array $user_ids): array
+    {
+        if (empty($user_ids)) {
+            return [];
+        }
+
+        try {
+            global $DIC;
+            $db = $DIC->database();
+
+            // 1 Query für ALLE User-IDs statt N einzelne Queries
+            $query = "SELECT usr_id, login, firstname, lastname
+                      FROM usr_data
+                      WHERE " . $db->in('usr_id', $user_ids, false, 'integer');
+
+            $result = $db->query($query);
+            $users = [];
+
+            while ($row = $db->fetchAssoc($result)) {
+                $user_id = (int)$row['usr_id'];
+                $users[$user_id] = [
+                    'user_id' => $user_id,
+                    'login' => $row['login'],
+                    'firstname' => $row['firstname'],
+                    'lastname' => $row['lastname'],
+                    'fullname' => trim($row['firstname'] . ' ' . $row['lastname'])
+                ];
+            }
+
+            return $users;
+
+        } catch (Exception $e) {
+            $this->logger->error("Batch loading member data failed: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * PERFORMANCE: Batch-Laden aller Team-Status
+     *
+     * @param int $assignment_id Assignment ID
+     * @param array $user_ids Array von User-IDs
+     * @return array Assoziatives Array: user_id => status_data
+     */
+    private function getTeamStatusesBatch(int $assignment_id, array $user_ids): array
+    {
+        if (empty($user_ids)) {
+            return [];
+        }
+
+        try {
+            // 1 Query für ALLE User-Status statt N einzelne Queries
+            $query = "SELECT usr_id, status, mark, notice, comment
+                      FROM exc_mem_ass_status
+                      WHERE ass_id = " . $this->db->quote($assignment_id, 'integer') . "
+                      AND " . $this->db->in('usr_id', $user_ids, false, 'integer');
+
+            $result = $this->db->query($query);
+            $statuses = [];
+
+            while ($row = $this->db->fetchAssoc($result)) {
+                $user_id = (int)$row['usr_id'];
+                $statuses[$user_id] = [
+                    'status' => $this->translateStatus($row['status'] ?? null),
+                    'mark' => $row['mark'] ?: '',
+                    'notice' => $row['notice'] ?: '',
+                    'comment' => $row['comment'] ?: ''
+                ];
+            }
+
+            return $statuses;
+
+        } catch (Exception $e) {
+            $this->logger->error("Batch loading team statuses failed: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Mitglieder-Daten laden (Einzelner User - Legacy-Support)
      */
     private function getMemberData(int $user_id): ?array
     {
@@ -145,7 +299,7 @@ class ilExTeamDataProvider
             if (!$user_data || !$user_data['login']) {
                 return null;
             }
-            
+
             return [
                 'user_id' => $user_id,
                 'login' => $user_data['login'],
@@ -153,13 +307,13 @@ class ilExTeamDataProvider
                 'lastname' => $user_data['lastname'],
                 'fullname' => trim($user_data['firstname'] . ' ' . $user_data['lastname'])
             ];
-            
+
         } catch (Exception $e) {
             $this->logger->error("Error loading member data for user $user_id: " . $e->getMessage());
             return null;
         }
     }
-    
+
     /**
      * Team-Status ermitteln
      */
@@ -232,12 +386,18 @@ class ilExTeamDataProvider
     {
         try {
             $teams_data = $this->getTeamsForAssignment($assignment_id);
-            
+
             header('Content-Type: application/json; charset=utf-8');
             header('Cache-Control: no-cache, must-revalidate');
             header('Expires: Sat, 26 Jul 1997 05:00:00 GMT');
-            
+
+            // Enable Gzip compression for faster transfer
+            if (!ob_start('ob_gzhandler')) {
+                ob_start();
+            }
+
             echo json_encode($teams_data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            ob_end_flush();
             exit;
             
         } catch (Exception $e) {
