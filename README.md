@@ -161,11 +161,44 @@ Beim Upload werden Feedback-Dateien mit bestehenden Submissions verglichen:
 
 ## Tests
 
-### Automatisierte Tests ausführen
+Das Plugin verfügt über umfassende automatisierte Tests für Qualitätssicherung.
 
-Das Plugin enthält automatisierte Smoke-Tests, die die grundlegende Funktionalität überprüfen.
+### Integration Tests (NEU!)
 
-**Tests starten:**
+**Vollautomatisierte Tests** des gesamten Multi-Feedback Workflows:
+- ✅ Individual & Team Assignments
+- ✅ Download → Upload Workflow
+- ✅ Status-File Verarbeitung (XLSX + CSV)
+- ✅ Checksum-basierte Datei-Umbenennung
+- ✅ Negative Tests (Error Handling)
+- ✅ Performance-Optimierungen
+
+**Tests ausführen:**
+
+```bash
+cd tests/integration/
+
+# CLI (empfohlen)
+php run-all-tests.php --parent-ref=12345
+
+# Web Interface
+# Browser: /Customizing/.../ExerciseStatusFile/tests/integration/web-runner.php
+```
+
+**Features:**
+- 🎯 **Parent RefID Support:** Tests erstellen Objekte in eigenem Ordner (nicht Root!)
+- 🧹 **Auto-Cleanup:** Test-Daten werden automatisch aufgeräumt
+- 📊 **15+ Test-Szenarien:** Individual, Team, CSV, Negative Tests
+- ⚡ **Schnell:** ~30 Sekunden für alle Tests
+
+**Wichtig für Admins:**
+- Siehe [docs/ADMIN_GUIDE_TESTS.md](docs/ADMIN_GUIDE_TESTS.md) für detaillierte Anleitung
+- **Immer Parent RefID setzen!** (z.B. Test-Ordner RefID)
+- Tests sind sicher und löschen alle temporären Daten
+
+### Smoke Tests
+
+Grundlegende Struktur- und Syntax-Tests:
 
 ```bash
 cd tests/
@@ -178,28 +211,9 @@ php smoke-test.php
 - ✅ Klassen-Struktur (erforderliche Methoden vorhanden)
 - ✅ Security-Features (Path Traversal Prevention)
 
-**Erwartetes Ergebnis:**
-```
-ExerciseStatusFile Plugin - Smoke Tests
-========================================
-
-Running tests...
-
-✅ File structure: plugin.php exists
-✅ File structure: class.ilExerciseStatusFileUIHookGUI.php exists
-...
-✅ Security: Path traversal prevention - ../ filtering
-✅ Security: Path traversal prevention - realpath() check
-
-========================================
-Results: ✅ Passed: 29, ❌ Failed: 0, ⚠️ Warnings: 0
-========================================
-ALL TESTS PASSED! ✅
-```
-
 ### Manuelle Tests
 
-Für umfassende Funktionstests siehe [tests/MANUAL_TESTS.md](tests/MANUAL_TESTS.md).
+Für umfassende Funktionstests siehe [tests/MANUAL_TEST_GUIDE.md](tests/MANUAL_TEST_GUIDE.md).
 
 Diese beinhalten:
 - Individual und Team Assignments
@@ -218,11 +232,21 @@ GPL-3.0
 
 ## Version
 
-1.2.0 - 2025-10-30
+1.3.0 - 2025-01-30
 
 ### Changelog
 
-**1.2.0** (2025-10-30)
+**1.3.0** (2025-01-30)
+- ✅ **Integration Tests:** Vollautomatisiertes Test-Framework mit 15+ Szenarien
+- ✅ **Negative Tests:** Error Handling Tests für robusteren Code
+- ✅ **CSV Status-File Support:** Tests für CSV zusätzlich zu Excel
+- ✅ **Parent RefID:** Tests können in eigenem Ordner erstellt werden (nicht Root)
+- ✅ **Checksum-basierte Status-File Auswahl:** Intelligente Erkennung welches File verwendet werden soll
+- ✅ **Performance:** Optimiertes Batch-Loading von Team-Daten
+- ✅ **Code-Cleanup:** Entfernte Debug-Logs, optimierte Methoden
+- 📚 **Dokumentation:** Admin Guide für Tests, KI-Infos für Entwickler
+
+**1.2.0** (2025-01-20)
 - Feedback-Upload ohne Status-Updates möglich
 - Verbesserte Team-ID Erkennung
 - Optimierte Performance (weniger DB-Abfragen)
