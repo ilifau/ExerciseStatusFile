@@ -806,14 +806,17 @@ class ilExFeedbackUploadHandler
                 try {
                     $file_path = $file_data['path'];
                     $filename = $file_data['filename'];
-                    
+
+                    // DEBUG: Log actual filename being uploaded
+                    $this->logger->info("addFeedbackFilesViaResourceStorage: Uploading file with filename='$filename' (path: $file_path)");
+
                     if (!file_exists($file_path)) {
                         $this->logger->warning("Feedback file does not exist: $file_path");
                         continue;
                     }
-                    
+
                     $stream = \ILIAS\Filesystem\Stream\Streams::ofResource(fopen($file_path, 'rb'));
-                    
+
                     $rid = $DIC->resourceStorage()->manage()->stream(
                         $stream,
                         $stakeholder,
@@ -869,14 +872,17 @@ class ilExFeedbackUploadHandler
             try {
                 $file_path = $file_data['path'];
                 $filename = $file_data['filename'];
-                
+
+                // DEBUG: Log actual filename being uploaded
+                $this->logger->info("addFeedbackFilesViaFilesystem: Uploading file with filename='$filename' (path: $file_path)");
+
                 if (!file_exists($file_path)) {
                     $this->logger->warning("Feedback file does not exist: $file_path");
                     continue;
                 }
-                
+
                 $target_path = $feedback_path . '/' . $filename;
-                
+
                 if (copy($file_path, $target_path)) {
                     $files_added++;
                 } else {
@@ -1125,9 +1131,28 @@ class ilExFeedbackUploadHandler
             'original_path' => $file['original_path']
         ];
 
-        // Erstelle neue File-Array mit neuem Namen
+        // WICHTIG: Physische Datei auf Festplatte umbenennen!
+        // ILIAS nimmt den Dateinamen aus der physischen Datei, nicht aus unserem Parameter
+        $old_path = $file['path'];
+        $new_path = dirname($old_path) . '/' . $new_filename;
+
+        if (file_exists($old_path)) {
+            if (rename($old_path, $new_path)) {
+                $this->logger->info("renameModifiedSubmission: Successfully renamed physical file from '$original_filename' to '$new_filename'");
+            } else {
+                $this->logger->error("renameModifiedSubmission: Failed to rename physical file from '$old_path' to '$new_path'");
+                // Fallback: behalte alten Path
+                $new_path = $old_path;
+            }
+        } else {
+            $this->logger->warning("renameModifiedSubmission: Source file does not exist: $old_path");
+            $new_path = $old_path;
+        }
+
+        // Erstelle neue File-Array mit neuem Namen UND neuem Path
         $renamed_file = $file;
         $renamed_file['filename'] = $new_filename;
+        $renamed_file['path'] = $new_path;  // ← WICHTIG: Neuer Path!
         $renamed_file['was_renamed'] = true;
         $renamed_file['original_filename'] = $original_filename;
 
