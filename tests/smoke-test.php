@@ -34,6 +34,8 @@ class SmokeTests
         $this->testTeamDetection();
         $this->testSecurityFunctions();
         $this->testAssignmentDetection();
+        $this->testChecksumFeature();
+        $this->testSystemFileFiltering();
 
         echo "\n";
         echo "───────────────────────────────────────────────────────\n";
@@ -157,8 +159,18 @@ class SmokeTests
         );
 
         $this->test(
+            "processIndividualFeedbackFiles method exists",
+            fn() => strpos($upload_handler, 'function processIndividualFeedbackFiles') !== false
+        );
+
+        $this->test(
             "filterNewFeedbackFiles method exists",
             fn() => strpos($upload_handler, 'function filterNewFeedbackFiles') !== false
+        );
+
+        $this->test(
+            "processUserSpecificFeedback method exists",
+            fn() => strpos($upload_handler, 'function processUserSpecificFeedback') !== false
         );
 
         $this->test(
@@ -290,6 +302,100 @@ class SmokeTests
         $this->test(
             "Assignment detection: saveToSession called on direct params",
             fn() => strpos($detector_content, '$this->saveToSession($direct_result)') !== false
+        );
+    }
+
+    private function testChecksumFeature(): void
+    {
+        echo "\n🔐 Checksum Feature Tests\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        $upload_handler = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExFeedbackUploadHandler.php');
+
+        $this->test(
+            "checkIfFileModified method exists",
+            fn() => strpos($upload_handler, 'function checkIfFileModified') !== false
+        );
+
+        $this->test(
+            "renameModifiedSubmission method exists",
+            fn() => strpos($upload_handler, 'function renameModifiedSubmission') !== false
+        );
+
+        $this->test(
+            "Checksum validation uses MD5",
+            fn() => strpos($upload_handler, 'md5_file') !== false
+        );
+
+        $this->test(
+            "Modified files are renamed with '_korrigiert' suffix",
+            fn() => strpos($upload_handler, '_korrigiert') !== false
+        );
+
+        $this->test(
+            "Checksum feature logs file modifications",
+            fn() => strpos($upload_handler, 'was MODIFIED') !== false ||
+                    strpos($upload_handler, 'hash mismatch') !== false
+        );
+
+        $this->test(
+            "Checksum feature logs identical files",
+            fn() => strpos($upload_handler, 'identical hash') !== false ||
+                    strpos($upload_handler, 'FILTERED OUT') !== false
+        );
+
+        $this->test(
+            "loadChecksumsFromExtractedFiles method exists",
+            fn() => strpos($upload_handler, 'function loadChecksumsFromExtractedFiles') !== false
+        );
+
+        $this->test(
+            "Checksums are loaded from checksums.json",
+            fn() => strpos($upload_handler, 'checksums.json') !== false
+        );
+    }
+
+    private function testSystemFileFiltering(): void
+    {
+        echo "\n📋 System File Filtering Tests\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        $upload_handler = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExFeedbackUploadHandler.php');
+
+        $this->test(
+            "System filenames array includes all required files",
+            fn() => strpos($upload_handler, "['status.xlsx', 'status.csv', 'status.xls', 'checksums.json', 'README.md']") !== false
+        );
+
+        $this->test(
+            "User folder detection pattern exists",
+            fn() => strpos($upload_handler, '$is_in_user_folder') !== false
+        );
+
+        $this->test(
+            "System files in root are filtered",
+            fn() => strpos($upload_handler, 'Skipping root system file') !== false
+        );
+
+        $this->test(
+            "System files in user folders are NOT filtered",
+            fn() => strpos($upload_handler, '&& !$is_in_user_folder') !== false
+        );
+
+        $this->test(
+            "Log message for system files in user folders",
+            fn() => strpos($upload_handler, 'Found system filename') !== false &&
+                    strpos($upload_handler, 'in user folder') !== false
+        );
+
+        $this->test(
+            "README.md in user folders is processed normally",
+            fn() => strpos($upload_handler, 'will be processed normally') !== false
+        );
+
+        $this->test(
+            "User folder pattern matches expected format",
+            fn() => strpos($upload_handler, '/\/[^\/]+_[^\/]+_[^\/]+_\d+\/[^\/]+$/') !== false
         );
     }
 

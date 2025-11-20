@@ -238,15 +238,16 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             
         } catch (Exception $e) {
             $this->logger->error("Multi-Feedback upload error: " . $e->getMessage());
-            
+
             // Error Response mit detaillierter Fehlermeldung
             header('Content-Type: application/json; charset=utf-8');
             header('HTTP/1.1 400 Bad Request');
-            
+
             echo json_encode([
                 'success' => false,
-                'error' => $e->getMessage(),
-                'details' => 'Überprüfen Sie, ob die ZIP-Datei die korrekten Status-Files für dieses Assignment enthält.'
+                'error' => true,
+                'message' => $e->getMessage(),
+                'error_details' => $e->getMessage()
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }

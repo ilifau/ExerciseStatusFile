@@ -59,6 +59,8 @@ class ilExFeedbackUploadHandler
             
         } catch (Exception $e) {
             $this->logger->error("Upload handler error: " . $e->getMessage());
+            // Exception weitergeben, damit sie in handleMultiFeedbackUploadRequest() verarbeitet werden kann
+            throw $e;
         }
     }
     
@@ -82,8 +84,16 @@ class ilExFeedbackUploadHandler
                 try {
                     $this->processStatusFiles($status_files, $assignment_id, true);
                 } catch (Exception $e) {
-                    // Wenn Status-Verarbeitung fehlschlägt, trotzdem Feedback-Files verarbeiten
-                    $this->logger->info("Status file processing skipped: " . $e->getMessage());
+                    // Prüfe ob es ein kritischer Fehler ist (z.B. ungültiger Status-Wert)
+                    $error_msg = $e->getMessage();
+                    if (strpos($error_msg, 'Invalid status') !== false ||
+                        strpos($error_msg, 'Status file error') !== false) {
+                        // Kritischer Fehler - Upload abbrechen
+                        $this->logger->error("Critical error in status file: " . $error_msg);
+                        throw new Exception("Status-File Fehler: " . $error_msg);
+                    }
+                    // Nur bei anderen Fehlern (z.B. leere Files) fortfahren
+                    $this->logger->info("Status file processing skipped: " . $error_msg);
                 }
             }
 
@@ -115,8 +125,16 @@ class ilExFeedbackUploadHandler
                 try {
                     $this->processStatusFiles($status_files, $assignment_id, false);
                 } catch (Exception $e) {
-                    // Wenn Status-Verarbeitung fehlschlägt, trotzdem Feedback-Files verarbeiten
-                    $this->logger->info("Status file processing skipped: " . $e->getMessage());
+                    // Prüfe ob es ein kritischer Fehler ist (z.B. ungültiger Status-Wert)
+                    $error_msg = $e->getMessage();
+                    if (strpos($error_msg, 'Invalid status') !== false ||
+                        strpos($error_msg, 'Status file error') !== false) {
+                        // Kritischer Fehler - Upload abbrechen
+                        $this->logger->error("Critical error in status file: " . $error_msg);
+                        throw new Exception("Status-File Fehler: " . $error_msg);
+                    }
+                    // Nur bei anderen Fehlern (z.B. leere Files) fortfahren
+                    $this->logger->info("Status file processing skipped: " . $error_msg);
                 }
             }
 
@@ -627,10 +645,14 @@ class ilExFeedbackUploadHandler
     private function findIndividualFeedbackFiles(array $extracted_files): array
     {
         $individual_files = [];
-        
+
+        $this->logger->info("findIndividualFeedbackFiles: Processing " . count($extracted_files) . " extracted files");
+
         foreach ($extracted_files as $file) {
             $path = $file['original_name'];
-            
+
+            $this->logger->debug("findIndividualFeedbackFiles: Checking file: $path");
+
             // Pattern: IRGENDETWAS/Lastname_Firstname_Login_12345/filename.ext
             if (preg_match('/\/([^\/]+)_([^\/]+)_([^\/]+)_(\d+)\/([^\/]+)$/', $path, $matches)) {
                 $user_id = (int)$matches[4];
@@ -645,9 +667,15 @@ class ilExFeedbackUploadHandler
                     'path' => $file['extracted_path'],
                     'original_path' => $path
                 ];
+
+                $this->logger->info("findIndividualFeedbackFiles: MATCHED file '$filename' for user_id=$user_id");
+            } else {
+                $this->logger->debug("findIndividualFeedbackFiles: NO MATCH for path: $path");
             }
         }
-        
+
+        $this->logger->info("findIndividualFeedbackFiles: Found " . count($individual_files) . " users with feedback files");
+
         return $individual_files;
     }
     
@@ -700,22 +728,26 @@ class ilExFeedbackUploadHandler
     private function processUserSpecificFeedback(int $user_id, array $files, int $assignment_id, bool $already_filtered = false, array $checksums = []): void
     {
         try {
+            $this->logger->info("processUserSpecificFeedback: Starting for user_id=$user_id with " . count($files) . " files, already_filtered=" . ($already_filtered ? 'true' : 'false'));
+
             // Feedback-Dateien werden immer verarbeitet, auch ohne Status-Update
             // Dies macht die Handhabung für Tutoren intuitiver
 
             // Nur filtern wenn noch nicht gefiltert
             if (!$already_filtered) {
                 $existing_submissions = $this->getExistingSubmissionFiles($assignment_id, $user_id);
+                $this->logger->info("processUserSpecificFeedback: Found " . count($existing_submissions) . " existing submissions for user_id=$user_id");
                 $new_feedback_files = $this->filterNewFeedbackFiles($files, $existing_submissions, $checksums);
             } else {
                 $new_feedback_files = $files;
             }
 
             if (empty($new_feedback_files)) {
+                $this->logger->info("processUserSpecificFeedback: No new feedback files for user_id=$user_id after filtering - RETURNING");
                 return;
             }
-            
-            $this->logger->debug("Processing " . count($new_feedback_files) . " new feedback files for user $user_id");
+
+            $this->logger->info("processUserSpecificFeedback: Processing " . count($new_feedback_files) . " new feedback files for user $user_id");
             
             $assignment = new \ilExAssignment($assignment_id);
             $is_team = $assignment->getAssignmentType()->usesTeams();
@@ -952,11 +984,23 @@ class ilExFeedbackUploadHandler
 
         foreach ($files as $file) {
             $filename = $file['filename'];
+            $original_path = $file['original_path'] ?? '';
 
-            // Skip Status-Files und System-Files
-            if (in_array($filename, ['status.xlsx', 'status.csv', 'status.xls', 'README.md', 'checksums.json'])) {
-                $this->logger->debug("filterNewFeedbackFiles: Skipping system file: $filename");
+            // Skip System-Files (nur im Root, NICHT in User-Ordnern)
+            // User-Ordner haben das Pattern: .../Lastname_Firstname_Login_12345/filename
+            // System-Files im Root haben KEIN User-Ordner-Prefix
+            $system_filenames = ['status.xlsx', 'status.csv', 'status.xls', 'checksums.json', 'README.md'];
+            $is_in_user_folder = preg_match('/\/[^\/]+_[^\/]+_[^\/]+_\d+\/[^\/]+$/', $original_path);
+
+            if (in_array($filename, $system_filenames) && !$is_in_user_folder) {
+                // System-File im Root → filtern
+                $this->logger->debug("filterNewFeedbackFiles: Skipping root system file: $filename (path: $original_path)");
                 continue;
+            }
+
+            // Info-Log wenn ein System-Filename in einem User-Ordner gefunden wird
+            if (in_array($filename, $system_filenames) && $is_in_user_folder) {
+                $this->logger->info("filterNewFeedbackFiles: Found system filename '$filename' in user folder - will be processed normally (path: $original_path)");
             }
 
             if (substr($filename, 0, 1) === '.' || substr($filename, 0, 2) === '__') {

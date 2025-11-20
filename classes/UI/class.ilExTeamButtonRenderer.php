@@ -551,10 +551,32 @@ class ilExTeamButtonRenderer
                         };
                         
                         xhr.onload = function() {
+                            console.log("[ExerciseStatusFile] Upload response received - Status:", xhr.status);
+                            console.log("[ExerciseStatusFile] Response text:", xhr.responseText);
+
                             if (xhr.status === 200) {
                                 window.ExerciseStatusFilePlugin.handleUploadSuccess(xhr.responseText);
                             } else {
-                                window.ExerciseStatusFilePlugin.handleUploadError("' . $txt['error_http'] . ' " + xhr.status);
+                                console.error("[ExerciseStatusFile] Upload failed with HTTP status:", xhr.status);
+
+                                // Parse error response
+                                var errorMessage = "' . $txt['error_http'] . ' " + xhr.status;
+                                try {
+                                    var errorData = JSON.parse(xhr.responseText);
+                                    if (errorData.message) {
+                                        errorMessage = errorData.message;
+                                    } else if (errorData.error_details) {
+                                        errorMessage = errorData.error_details;
+                                    }
+                                    console.error("[ExerciseStatusFile] Parsed error data:", errorData);
+                                } catch(e) {
+                                    console.error("[ExerciseStatusFile] Failed to parse error response:", e);
+                                    // Wenn JSON-Parsing fehlschlägt, verwende responseText direkt
+                                    if (xhr.responseText) {
+                                        errorMessage = xhr.responseText;
+                                    }
+                                }
+                                window.ExerciseStatusFilePlugin.handleUploadError(errorMessage);
                             }
                         };
                         
@@ -594,32 +616,141 @@ class ilExTeamButtonRenderer
                     
                     handleUploadSuccess: function(responseText) {
                         var uploadContent = document.getElementById("upload-content");
-                        uploadContent.innerHTML = 
+
+                        console.log("[ExerciseStatusFile] handleUploadSuccess called");
+
+                        // DEBUG: Parse und prüfe Response
+                        var responseData = null;
+                        var hasError = false;
+                        var errorMsg = "";
+
+                        try {
+                            responseData = JSON.parse(responseText);
+                            console.log("[ExerciseStatusFile] Parsed response data:", responseData);
+
+                            if (responseData.error || responseData.success === false) {
+                                hasError = true;
+                                errorMsg = responseData.message || responseData.error_details || "Unbekannter Fehler";
+                                console.error("[ExerciseStatusFile] Error detected in response:", errorMsg);
+                            } else {
+                                console.log("[ExerciseStatusFile] Upload successful!");
+                            }
+                        } catch(e) {
+                            console.warn("[ExerciseStatusFile] Failed to parse response as JSON:", e);
+                            // Kein JSON - behandle als Text
+                            if (responseText.toLowerCase().includes("error") || responseText.toLowerCase().includes("exception")) {
+                                hasError = true;
+                                errorMsg = responseText;
+                                console.error("[ExerciseStatusFile] Error keyword detected in response text");
+                            }
+                        }
+
+                        // Wenn Fehler erkannt, zeige Error statt Success
+                        if (hasError) {
+                            console.error("[ExerciseStatusFile] Redirecting to error handler with message:", errorMsg);
+                            window.ExerciseStatusFilePlugin.handleUploadError(errorMsg);
+                            return;
+                        }
+
+                        uploadContent.innerHTML =
                             "<div style=\"text-align: center; padding: 40px;\">" +
                                 "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 20px;\">✅</div>" +
                                 "<h4 style=\"color: #28a745; margin-bottom: 15px;\">' . $txt['upload_success'] . '</h4>" +
                                 "<p style=\"color: #666;\">' . $txt['upload_success_msg'] . '</p>" +
+                                "<p id=\"auto-reload-countdown\" style=\"color: #666; margin-top: 10px; font-size: 14px;\">Seite wird in <span id=\"countdown-seconds\">20</span> Sekunden neu geladen...</p>" +
                                 "<button onclick=\"window.location.reload()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
                                     "' . $txt['upload_reload_page'] . '" +
                                 "</button>" +
                             "</div>";
+
+                        // Auto-reload nach 20 Sekunden
+                        var secondsLeft = 20;
+                        var countdownInterval = setInterval(function() {
+                            secondsLeft--;
+                            var countdownElement = document.getElementById("countdown-seconds");
+                            if (countdownElement) {
+                                countdownElement.textContent = secondsLeft;
+                            }
+                            if (secondsLeft <= 0) {
+                                clearInterval(countdownInterval);
+                                window.location.reload();
+                            }
+                        }, 1000);
                     },
-                    
+
                     handleUploadError: function(error) {
                         var uploadContent = document.getElementById("upload-content");
-                        uploadContent.innerHTML = 
+
+                        console.error("[ExerciseStatusFile] handleUploadError called with error:", error);
+
+                        // HTML-escape und Zeilenumbrüche konvertieren
+                        var escapedError = error
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/"/g, "&quot;")
+                            .replace(/\'/g, "&#039;")
+                            .replace(/\\n/g, "<br>");
+
+                        uploadContent.innerHTML =
                             "<div style=\"text-align: center; padding: 40px;\">" +
                                 "<div style=\"font-size: 48px; color: #dc3545; margin-bottom: 20px;\">❌</div>" +
                                 "<h4 style=\"color: #dc3545; margin-bottom: 15px;\">' . $txt['upload_error'] . '</h4>" +
-                                "<p style=\"color: #666; margin-top: 15px;\">" + error + "</p>" +
-                                "<button onclick=\"window.ExerciseStatusFilePlugin.switchTab(window.ExerciseStatusFilePlugin.currentAssignmentId, \'upload\')\" " +
+                                "<div style=\"color: #721c24; background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px auto; max-width: 600px; text-align: left; border: 1px solid #f5c6cb; font-family: monospace; white-space: pre-wrap;\">" +
+                                    escapedError +
+                                "</div>" +
+                                "<button onclick=\"window.ExerciseStatusFilePlugin.resetUploadTab()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
                                     "' . $txt['upload_retry'] . '" +
                                 "</button>" +
                             "</div>";
                     },
-                    
+
+                    resetUploadTab: function() {
+                        console.log("[ExerciseStatusFile] Resetting upload tab");
+
+                        // Assignment ID speichern BEVOR wir das HTML zurücksetzen
+                        var currentAssId = window.ExerciseStatusFilePlugin.currentAssignmentId;
+                        console.log("[ExerciseStatusFile] Using assignment ID:", currentAssId);
+
+                        var uploadContent = document.getElementById("upload-content");
+
+                        // File Input zurücksetzen
+                        var fileInput = document.getElementById("upload-file");
+                        if (fileInput) {
+                            fileInput.value = "";
+                        }
+
+                        // Upload-Tab HTML zurücksetzen (mit gespeicherter Assignment ID)
+                        uploadContent.innerHTML =
+                            "<h4 style=\"margin-top: 0; color: #28a745;\">📤 ' . $txt['upload_title'] . '</h4>" +
+                            "<div style=\"border: 2px dashed #28a745; border-radius: 8px; padding: 30px; text-align: center; margin-bottom: 20px;\">" +
+                                "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 15px;\">📁</div>" +
+                                "<input type=\"file\" id=\"upload-file\" accept=\".zip\" style=\"display: none;\" onchange=\"window.ExerciseStatusFilePlugin.handleFileSelect()\">" +
+                                "<button onclick=\"document.getElementById(\'upload-file\').click()\" " +
+                                        "style=\"padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;\">" +
+                                    "' . $txt['upload_select_file'] . '" +
+                                "</button>" +
+                                "<p style=\"margin: 10px 0 0 0; color: #666;\">' . $txt['upload_select_file_desc'] . '</p>" +
+                            "</div>" +
+
+                            "<div id=\"upload-info\" style=\"display: none; background: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 15px;\">" +
+                                "<h5 style=\"margin: 0 0 10px 0;\">📋 ' . $txt['upload_file_selected'] . ':</h5>" +
+                                "<div id=\"file-info\"></div>" +
+                            "</div>" +
+
+                            "<div style=\"display: flex; justify-content: space-between; align-items: center;\">" +
+                                "<div style=\"color: #666; font-size: 14px;\">" +
+                                    "💡 ' . $txt['upload_hint'] . '" +
+                                "</div>" +
+                                "<button id=\"start-upload-btn\" onclick=\"window.ExerciseStatusFilePlugin.startMultiFeedbackUpload(" + currentAssId + ")\" " +
+                                        "style=\"padding: 8px 15px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer;\" disabled>" +
+                                    "📤 ' . $txt['upload_start'] . '" +
+                                "</button>" +
+                            "</div>";
+                    },
+
                     loadTeamsForAssignment: function(assignmentId) {
                         var xhr = new XMLHttpRequest();
                         var url = window.location.pathname + "?cmd=members&ass_id=" + assignmentId + "&plugin_action=get_teams";
@@ -703,6 +834,7 @@ class ilExTeamButtonRenderer
                     // ==========================================
                     
                     startIndividualMultiFeedback: function(assignmentId) {
+                        this.currentAssignmentId = assignmentId; // Speichere ID
                         this.showIndividualFeedbackModal(assignmentId);
                     },
                     
@@ -1036,10 +1168,32 @@ class ilExTeamButtonRenderer
                         };
                         
                         xhr.onload = function() {
+                            console.log("[ExerciseStatusFile] Individual upload response received - Status:", xhr.status);
+                            console.log("[ExerciseStatusFile] Response text:", xhr.responseText);
+
                             if (xhr.status === 200) {
                                 window.ExerciseStatusFilePlugin.handleIndividualUploadSuccess(xhr.responseText);
                             } else {
-                                window.ExerciseStatusFilePlugin.handleIndividualUploadError("' . $txt['error_http'] . ' " + xhr.status);
+                                console.error("[ExerciseStatusFile] Individual upload failed with HTTP status:", xhr.status);
+
+                                // Parse error response
+                                var errorMessage = "' . $txt['error_http'] . ' " + xhr.status;
+                                try {
+                                    var errorData = JSON.parse(xhr.responseText);
+                                    if (errorData.message) {
+                                        errorMessage = errorData.message;
+                                    } else if (errorData.error_details) {
+                                        errorMessage = errorData.error_details;
+                                    }
+                                    console.error("[ExerciseStatusFile] Parsed error data:", errorData);
+                                } catch(e) {
+                                    console.error("[ExerciseStatusFile] Failed to parse error response:", e);
+                                    // Wenn JSON-Parsing fehlschlägt, verwende responseText direkt
+                                    if (xhr.responseText) {
+                                        errorMessage = xhr.responseText;
+                                    }
+                                }
+                                window.ExerciseStatusFilePlugin.handleIndividualUploadError(errorMessage);
                             }
                         };
                         
@@ -1079,32 +1233,141 @@ class ilExTeamButtonRenderer
                     
     handleIndividualUploadSuccess: function(responseText) {
                         var uploadContent = document.getElementById("individual-upload-content");
-                        uploadContent.innerHTML = 
+
+                        console.log("[ExerciseStatusFile] handleIndividualUploadSuccess called");
+
+                        // DEBUG: Parse und prüfe Response
+                        var responseData = null;
+                        var hasError = false;
+                        var errorMsg = "";
+
+                        try {
+                            responseData = JSON.parse(responseText);
+                            console.log("[ExerciseStatusFile] Parsed response data:", responseData);
+
+                            if (responseData.error || responseData.success === false) {
+                                hasError = true;
+                                errorMsg = responseData.message || responseData.error_details || "Unbekannter Fehler";
+                                console.error("[ExerciseStatusFile] Error detected in response:", errorMsg);
+                            } else {
+                                console.log("[ExerciseStatusFile] Individual upload successful!");
+                            }
+                        } catch(e) {
+                            console.warn("[ExerciseStatusFile] Failed to parse response as JSON:", e);
+                            // Kein JSON - behandle als Text
+                            if (responseText.toLowerCase().includes("error") || responseText.toLowerCase().includes("exception")) {
+                                hasError = true;
+                                errorMsg = responseText;
+                                console.error("[ExerciseStatusFile] Error keyword detected in response text");
+                            }
+                        }
+
+                        // Wenn Fehler erkannt, zeige Error statt Success
+                        if (hasError) {
+                            console.error("[ExerciseStatusFile] Redirecting to individual error handler with message:", errorMsg);
+                            window.ExerciseStatusFilePlugin.handleIndividualUploadError(errorMsg);
+                            return;
+                        }
+
+                        uploadContent.innerHTML =
                             "<div style=\"text-align: center; padding: 40px;\">" +
                                 "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 20px;\">✅</div>" +
                                 "<h4 style=\"color: #28a745; margin-bottom: 15px;\">' . $txt['upload_success'] . '</h4>" +
                                 "<p style=\"color: #666;\">' . $txt['upload_success_msg'] . '</p>" +
+                                "<p id=\"individual-auto-reload-countdown\" style=\"color: #666; margin-top: 10px; font-size: 14px;\">Seite wird in <span id=\"individual-countdown-seconds\">20</span> Sekunden neu geladen...</p>" +
                                 "<button onclick=\"window.location.reload()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
                                     "' . $txt['upload_reload_page'] . '" +
                                 "</button>" +
                             "</div>";
+
+                        // Auto-reload nach 20 Sekunden
+                        var secondsLeft = 20;
+                        var countdownInterval = setInterval(function() {
+                            secondsLeft--;
+                            var countdownElement = document.getElementById("individual-countdown-seconds");
+                            if (countdownElement) {
+                                countdownElement.textContent = secondsLeft;
+                            }
+                            if (secondsLeft <= 0) {
+                                clearInterval(countdownInterval);
+                                window.location.reload();
+                            }
+                        }, 1000);
                     },
-                    
+
                     handleIndividualUploadError: function(error) {
                         var uploadContent = document.getElementById("individual-upload-content");
-                        uploadContent.innerHTML = 
+
+                        console.error("[ExerciseStatusFile] handleIndividualUploadError called with error:", error);
+
+                        // HTML-escape und Zeilenumbrüche konvertieren
+                        var escapedError = error
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/"/g, "&quot;")
+                            .replace(/\'/g, "&#039;")
+                            .replace(/\\n/g, "<br>");
+
+                        uploadContent.innerHTML =
                             "<div style=\"text-align: center; padding: 40px;\">" +
                                 "<div style=\"font-size: 48px; color: #dc3545; margin-bottom: 20px;\">❌</div>" +
                                 "<h4 style=\"color: #dc3545; margin-bottom: 15px;\">' . $txt['upload_error'] . '</h4>" +
-                                "<p style=\"color: #666; margin-top: 15px;\">" + error + "</p>" +
-                                "<button onclick=\"window.ExerciseStatusFilePlugin.switchIndividualTab(0, \'upload\')\" " +
+                                "<div style=\"color: #721c24; background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px auto; max-width: 600px; text-align: left; border: 1px solid #f5c6cb; font-family: monospace; white-space: pre-wrap;\">" +
+                                    escapedError +
+                                "</div>" +
+                                "<button onclick=\"window.ExerciseStatusFilePlugin.resetIndividualUploadTab()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
                                     "' . $txt['upload_retry'] . '" +
                                 "</button>" +
                             "</div>";
                     },
-                    
+
+                    resetIndividualUploadTab: function() {
+                        console.log("[ExerciseStatusFile] Resetting individual upload tab");
+
+                        // Assignment ID speichern BEVOR wir das HTML zurücksetzen
+                        var currentAssId = window.ExerciseStatusFilePlugin.currentAssignmentId;
+                        console.log("[ExerciseStatusFile] Using assignment ID:", currentAssId);
+
+                        var uploadContent = document.getElementById("individual-upload-content");
+
+                        // File Input zurücksetzen
+                        var fileInput = document.getElementById("individual-upload-file");
+                        if (fileInput) {
+                            fileInput.value = "";
+                        }
+
+                        // Upload-Tab HTML zurücksetzen (mit gespeicherter Assignment ID)
+                        uploadContent.innerHTML =
+                            "<h4 style=\"margin-top: 0; color: #28a745;\">📤 ' . $txt['upload_title'] . '</h4>" +
+                            "<div style=\"border: 2px dashed #28a745; border-radius: 8px; padding: 30px; text-align: center; margin-bottom: 20px;\">" +
+                                "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 15px;\">📁</div>" +
+                                "<input type=\"file\" id=\"individual-upload-file\" accept=\".zip\" style=\"display: none;\" onchange=\"window.ExerciseStatusFilePlugin.handleIndividualFileSelect()\">" +
+                                "<button onclick=\"document.getElementById(\'individual-upload-file\').click()\" " +
+                                        "style=\"padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;\">" +
+                                    "' . $txt['upload_select_file'] . '" +
+                                "</button>" +
+                                "<p style=\"margin: 10px 0 0 0; color: #666;\">' . $txt['upload_select_file_desc'] . '</p>" +
+                            "</div>" +
+
+                            "<div id=\"individual-upload-info\" style=\"display: none; background: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 15px;\">" +
+                                "<h5 style=\"margin: 0 0 10px 0;\">📋 ' . $txt['upload_file_selected'] . ':</h5>" +
+                                "<div id=\"individual-file-info\"></div>" +
+                            "</div>" +
+
+                            "<div style=\"display: flex; justify-content: space-between; align-items: center;\">" +
+                                "<div style=\"color: #666; font-size: 14px;\">" +
+                                    "💡 ' . $txt['upload_hint'] . '" +
+                                "</div>" +
+                                "<button id=\"individual-start-upload-btn\" onclick=\"window.ExerciseStatusFilePlugin.startIndividualMultiFeedbackUpload(" + currentAssId + ")\" " +
+                                        "style=\"padding: 8px 15px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer;\" disabled>" +
+                                    "📤 ' . $txt['upload_start'] . '" +
+                                "</button>" +
+                            "</div>";
+                    },
+
                     loadIndividualUsersForAssignment: function(assignmentId) {
                         var xhr = new XMLHttpRequest();
                         var url = window.location.pathname + "?cmd=members&ass_id=" + assignmentId + "&plugin_action=get_individual_users";
