@@ -6,6 +6,16 @@ class ilExerciseStatusFilePlugin extends ilUserInterfaceHookPlugin
     const PLUGIN_ID = "exstatusfile";
     const PLUGIN_NAME = "ExerciseStatusFile";
 
+    /**
+     * Debug-Modus für E-Mail-Benachrichtigungen
+     *
+     * true = Debug-Modus aktiv (nur Logs, keine echten E-Mails)
+     * false = Produktiv-Modus (echte E-Mails werden verschickt)
+     *
+     * Debug-Infos sind nur für Admins sichtbar
+     */
+    const DEBUG_EMAIL_NOTIFICATIONS = true;
+
     public function getPluginName(): string
     {
         return self::PLUGIN_NAME;

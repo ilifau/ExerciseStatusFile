@@ -911,12 +911,17 @@ class ilExFeedbackUploadHandler
             
             if ($files_added > 0) {
                 $DIC->resourceStorage()->collection()->store($collection);
-                
+
                 $member_status = new \ilExAssignmentMemberStatus($assignment_id, $user_id);
                 $member_status->setFeedback(true);
                 $member_status->update();
-                
+
                 $this->logger->debug("Successfully added $files_added feedback files via resource storage for user $user_id");
+
+                // E-Mail-Benachrichtigung via Lazy Loading
+                require_once __DIR__ . '/class.ilExFeedbackNotificationSender.php';
+                $notifier = new ilExFeedbackNotificationSender();
+                $notifier->sendNotification($assignment_id, $user_id, $is_team);
             }
             
         } catch (Exception $e) {
@@ -973,8 +978,13 @@ class ilExFeedbackUploadHandler
             $member_status = new \ilExAssignmentMemberStatus($assignment_id, $user_id);
             $member_status->setFeedback(true);
             $member_status->update();
-            
+
             $this->logger->debug("Successfully added $files_added feedback files via filesystem for user $user_id");
+
+            // E-Mail-Benachrichtigung via Lazy Loading
+            require_once __DIR__ . '/class.ilExFeedbackNotificationSender.php';
+            $notifier = new ilExFeedbackNotificationSender();
+            $notifier->sendNotification($assignment_id, $user_id, $is_team);
         }
     }
 
