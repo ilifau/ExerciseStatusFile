@@ -105,8 +105,8 @@ class ilExFeedbackNotificationSender
                     }
 
                     try {
-                        // Send feedback notification
-                        $notification_manager->sendFeedbackNotification($assignment_id, $recipient_id);
+                        // Send feedback notification (requires array of user IDs)
+                        $notification_manager->sendFeedbackNotification($assignment_id, [$recipient_id]);
 
                         $this->notified_users[$assignment_id][$recipient_id] = true;
                         $stats['sent']++;
