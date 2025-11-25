@@ -584,6 +584,31 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             // Check if keep_data parameter is set
             $keep_data = isset($_GET['keep_data']) && $_GET['keep_data'] == '1';
 
+            // Get parent_ref_id parameter (default to 1 if not provided)
+            $parent_ref_id = isset($_GET['parent_ref_id']) ? (int)$_GET['parent_ref_id'] : 1;
+
+            if ($parent_ref_id < 1) {
+                echo "❌ Error: Invalid parent_ref_id. Must be >= 1\n";
+                exit;
+            }
+
+            // Validate that ref_id exists and user has access
+            if (!\ilObject::_exists($parent_ref_id, true)) {
+                echo "❌ Error: Ref-ID $parent_ref_id does not exist\n";
+                exit;
+            }
+
+            // Check if user has create permission for exercises in this location
+            if (!$DIC->access()->checkAccess('create', '', $parent_ref_id, 'exc')) {
+                echo "❌ Error: No permission to create exercises at Ref-ID $parent_ref_id\n";
+                exit;
+            }
+
+            $parent_obj_type = \ilObject::_lookupType($parent_ref_id, true);
+            $parent_title = \ilObject::_lookupTitle(\ilObject::_lookupObjId($parent_ref_id));
+
+            echo "Parent Ref-ID: $parent_ref_id ($parent_obj_type: '$parent_title')\n";
+
             if ($keep_data) {
                 echo "Mode: 💾 Test-Daten werden NICHT gelöscht\n";
             } else {
@@ -595,7 +620,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             $start_time = microtime(true);
 
             // Run tests
-            $runner = new IntegrationTestRunner();
+            $runner = new IntegrationTestRunner($parent_ref_id);
             $runner->runAll($keep_data);
 
             $duration = round(microtime(true) - $start_time, 2);

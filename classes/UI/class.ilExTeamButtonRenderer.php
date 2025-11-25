@@ -1708,6 +1708,11 @@ class ilExTeamButtonRenderer
                                         '<span><strong>💾 Ohne Cleanup</strong> - Test-Daten bleiben erhalten für manuelle Inspektion in der GUI</span>' +
                                     '</label>' +
                                 '</div>' +
+                                '<div style=\"margin: 20px 0; padding: 15px; background: #2d2d30; border: 1px solid #3c3c3c; border-radius: 4px;\">' +
+                                    '<label style=\"display: block; margin-bottom: 8px; color: #dcdcaa; font-weight: bold;\">📁 Parent Ref-ID (wo sollen Test-Übungen erstellt werden?):</label>' +
+                                    '<input type=\"number\" id=\"parent-ref-id\" value=\"1\" min=\"1\" style=\"width: 100%; padding: 8px; background: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; border-radius: 4px; font-family: monospace; font-size: 14px;\" placeholder=\"z.B. 1 für Root oder eine Kategorie-Ref-ID\">' +
+                                    '<small style=\"display: block; margin-top: 5px; color: #858585;\">Standard: 1 (Root-Kategorie). Du kannst hier die Ref-ID einer beliebigen Kategorie angeben.</small>' +
+                                '</div>' +
                                 '<div style=\"background: #1e3a5f; padding: 10px; border-left: 4px solid #569cd6; border-radius: 4px; margin-top: 15px;\">' +
                                     '<strong>ℹ️ Info:</strong> Mit \"Ohne Cleanup\" kannst du die erstellten Übungen in der GUI ansehen und deiner Teamleitung zeigen.' +
                                 '</div>' +
@@ -1803,6 +1808,13 @@ class ilExTeamButtonRenderer
                             var cleanupMode = document.querySelector('input[name=\"cleanup-mode\"]:checked').value;
                             var keepData = (cleanupMode === 'keep');
 
+                            // Get parent ref_id
+                            var parentRefId = document.getElementById('parent-ref-id').value;
+                            if (!parentRefId || parentRefId < 1) {
+                                alert('Bitte gib eine gültige Parent Ref-ID ein (mindestens 1).');
+                                return;
+                            }
+
                             // Hide options and show output
                             optionsPanel.style.display = 'none';
                             startBtn.style.display = 'none';
@@ -1817,6 +1829,8 @@ class ilExTeamButtonRenderer
                             if (keepData) {
                                 testUrl += '&keep_data=1';
                             }
+
+                            testUrl += '&parent_ref_id=' + encodeURIComponent(parentRefId);
 
                             fetch(testUrl, {
                                 method: 'GET'
