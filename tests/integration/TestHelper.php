@@ -33,7 +33,8 @@ class IntegrationTestHelper
      */
     public function createTestExercise(string $title_suffix = ''): ilObjExercise
     {
-        $title = "TEST_Exercise_" . time() . $title_suffix;
+        // Use unique prefix to avoid collision with production data
+        $title = "AUTOTEST_ExStatusFile_" . time() . $title_suffix;
 
         // Create exercise
         $exercise = new ilObjExercise();
@@ -49,7 +50,6 @@ class IntegrationTestHelper
         $this->created_objects[] = $exercise->getRefId();
 
         echo "   📋 Übung erstellt: '$title' (RefID: {$exercise->getRefId()}, Parent: {$this->parent_ref_id})\n";
-        $this->logger->info("Created test exercise: ID={$exercise->getId()}, RefID={$exercise->getRefId()}, Parent={$this->parent_ref_id}, Title=$title");
 
         return $exercise;
     }
@@ -85,8 +85,6 @@ class IntegrationTestHelper
 
         $assignment->save();
 
-        $this->logger->info("Created test assignment: ID={$assignment->getId()}, Type=$type, Team=$is_team, Title=$title");
-
         return $assignment;
     }
 
@@ -99,7 +97,8 @@ class IntegrationTestHelper
         $unique_id = uniqid('', true); // Unique ID for this batch
 
         for ($i = 1; $i <= $count; $i++) {
-            $username = "test_user_" . $unique_id . "_" . $i;
+            // Use unique prefix to avoid collision with production data
+            $username = "autotest_exstatusfile_" . $unique_id . "_" . $i;
 
             $user = new ilObjUser();
             $user->setLogin($username);
@@ -113,8 +112,6 @@ class IntegrationTestHelper
 
             $this->created_users[] = $user->getId();
             $users[] = $user;
-
-            $this->logger->info("Created test user: ID={$user->getId()}, Login=$username");
         }
 
         return $users;
@@ -132,8 +129,6 @@ class IntegrationTestHelper
         for ($i = 1; $i < count($member_user_ids); $i++) {
             $team->addTeamMember($member_user_ids[$i]);
         }
-
-        $this->logger->info("Created test team: ID={$team->getId()}, Assignment={$assignment->getId()}, Members=" . implode(',', $member_user_ids));
 
         return $team;
     }
@@ -153,6 +148,19 @@ class IntegrationTestHelper
         try {
             // Get exercise ID
             $exercise_id = $assignment->getExerciseId();
+
+            // Register user in exc_members (required for status file processing)
+            $check_query = "SELECT usr_id FROM exc_members WHERE obj_id = " . $db->quote($exercise_id, 'integer') .
+                          " AND usr_id = " . $db->quote($user_id, 'integer');
+            $check_result = $db->query($check_query);
+
+            if (!$db->fetchAssoc($check_result)) {
+                // User not yet registered - add them
+                $db->manipulate("INSERT INTO exc_members (obj_id, usr_id, status, sent, feedback) VALUES (" .
+                    $db->quote($exercise_id, 'integer') . ", " .
+                    $db->quote($user_id, 'integer') . ", " .
+                    $db->quote('notgraded', 'text') . ", 0, 0)");
+            }
 
             // Determine if this is a team assignment
             $is_team = in_array($assignment->getType(), [4, 5, 8]); // Team types: 4=Upload, 5=Text, 8=Wiki
@@ -210,15 +218,12 @@ class IntegrationTestHelper
                     'late' => ['integer', 0],
                     'team_id' => ['integer', $team_id]
                 ]);
-
-                $this->logger->info("Created test submission: Assignment={$assignment->getId()}, User=$user_id, File=$filename, Team=$team_id");
             }
 
             echo "   ✅ Submission erstellt für User $user_id\n";
 
         } catch (Exception $e) {
             echo "   ❌ Fehler: " . $e->getMessage() . "\n";
-            $this->logger->error("Submission creation failed: " . $e->getMessage());
             throw $e;
         }
     }
@@ -228,13 +233,74 @@ class IntegrationTestHelper
      */
     public function downloadMultiFeedbackZip(int $assignment_id, int $tutor_id = 13): string
     {
-        // Use the plugin's download handler
+        // For tests, we need to manually create a ZIP with the correct structure
+        // The actual download handler uses output buffering and sends headers
+
         require_once __DIR__ . '/../../classes/Processing/class.ilExMultiFeedbackDownloadHandler.php';
 
-        $handler = new ilExMultiFeedbackDownloadHandler();
-        $zip_path = $handler->generateMultiFeedbackZip($assignment_id, $tutor_id);
+        $assignment = new ilExAssignment($assignment_id);
+        $is_team = $assignment->getAssignmentType()->usesTeams();
 
-        $this->logger->info("Downloaded multi-feedback ZIP: Assignment=$assignment_id, Path=$zip_path");
+        $temp_dir = sys_get_temp_dir() . '/multifeedback_' . uniqid();
+        mkdir($temp_dir, 0777, true);
+
+        $zip_path = $temp_dir . '/multi_feedback.zip';
+        $zip = new ZipArchive();
+
+        if ($zip->open($zip_path, ZipArchive::CREATE) !== true) {
+            throw new Exception("Cannot create ZIP: $zip_path");
+        }
+
+        // Get all submissions
+        if ($is_team) {
+            $teams = ilExAssignmentTeam::getInstancesFromMap($assignment_id);
+            foreach ($teams as $team_id => $team) {
+                $member_ids = $team->getMembers();
+                if (empty($member_ids)) {
+                    continue;
+                }
+
+                // Use first member to get submission
+                $submission = new ilExSubmission($assignment, $member_ids[0]);
+                $files = $submission->getFiles();
+
+                $team_folder = 'exc_teams_' . $team_id . '/';
+
+                foreach ($files as $file) {
+                    $file_path = $file['fullpath'] ?? '';
+                    if (file_exists($file_path)) {
+                        $zip->addFile($file_path, $team_folder . $file['name']);
+                    }
+                }
+            }
+        } else {
+            // Individual assignments
+            $exc_id = $assignment->getExerciseId();
+            $members = ilExerciseMembers::_getMembers($exc_id);
+
+            foreach ($members as $user_id) {
+                $submission = new ilExSubmission($assignment, $user_id);
+                $files = $submission->getFiles();
+
+                if (empty($files)) {
+                    continue;
+                }
+
+                $user_folder = 'user_' . $user_id . '/';
+
+                foreach ($files as $file) {
+                    $file_path = $file['fullpath'] ?? '';
+                    if (file_exists($file_path)) {
+                        $zip->addFile($file_path, $user_folder . $file['name']);
+                    }
+                }
+            }
+        }
+
+        // Add empty status.xlsx
+        $zip->addFromString('status.xlsx', '');
+
+        $zip->close();
 
         return $zip_path;
     }
@@ -261,7 +327,6 @@ class IntegrationTestHelper
 
             foreach ($files as $file_path) {
                 file_put_contents($file_path, $new_content);
-                $this->logger->info("Modified file in ZIP: $file_path");
             }
         }
 
@@ -301,8 +366,6 @@ class IntegrationTestHelper
         $handler->handleFeedbackUpload($parameters);
         $output = ob_get_clean();
 
-        $this->logger->info("Uploaded multi-feedback ZIP: Assignment=$assignment_id");
-
         return json_decode($output, true) ?? [];
     }
 
@@ -319,12 +382,10 @@ class IntegrationTestHelper
 
         foreach ($files as $file) {
             if ($file['name'] === $expected_name) {
-                $this->logger->info("Verified file rename: $original_filename -> $expected_name");
                 return true;
             }
         }
 
-        $this->logger->warning("File rename verification failed: $original_filename -> $expected_name not found");
         return false;
     }
 
@@ -338,6 +399,7 @@ class IntegrationTestHelper
 
     /**
      * Cleanup all created test data (alias for cleanup)
+     * Only deletes objects that were tracked during this test run
      */
     public function cleanupAll(): void
     {
@@ -356,6 +418,19 @@ class IntegrationTestHelper
                 if ($row) {
                     $obj_id = $row['obj_id'];
 
+                    // Safety check: Verify this is actually a test object
+                    $check_query = "SELECT title FROM object_data WHERE obj_id = " . $db->quote($obj_id, 'integer');
+                    $check_result = $db->query($check_query);
+                    $check_row = $db->fetchAssoc($check_result);
+
+                    if ($check_row && strpos($check_row['title'], 'AUTOTEST_ExStatusFile_') !== 0) {
+                        echo "   ⚠️  WARNUNG: Überspringe Objekt $obj_id - kein Test-Objekt (Titel: {$check_row['title']})\n";
+                        continue;
+                    }
+
+                    // Delete exc_members entries for this exercise
+                    $db->manipulate("DELETE FROM exc_members WHERE obj_id = " . $db->quote($obj_id, 'integer'));
+
                     // Delete from object_reference
                     $db->manipulate("DELETE FROM object_reference WHERE ref_id = " . $db->quote($ref_id, 'integer'));
 
@@ -363,11 +438,9 @@ class IntegrationTestHelper
                     $db->manipulate("DELETE FROM object_data WHERE obj_id = " . $db->quote($obj_id, 'integer'));
 
                     echo "   ✓ Übung gelöscht (RefID: $ref_id, ObjID: $obj_id)\n";
-                    $this->logger->info("Deleted test object: RefID=$ref_id");
                 }
             } catch (Exception $e) {
                 echo "   ✗ Fehler beim Löschen der Übung $ref_id: " . $e->getMessage() . "\n";
-                $this->logger->warning("Failed to delete test object $ref_id: " . $e->getMessage());
             }
         }
 
@@ -375,6 +448,16 @@ class IntegrationTestHelper
         // Delete created users via database (avoid tpl dependency)
         foreach ($this->created_users as $user_id) {
             try {
+                // Safety check: Verify this is actually a test user
+                $check_query = "SELECT login FROM usr_data WHERE usr_id = " . $db->quote($user_id, 'integer');
+                $check_result = $db->query($check_query);
+                $check_row = $db->fetchAssoc($check_result);
+
+                if ($check_row && strpos($check_row['login'], 'autotest_exstatusfile_') !== 0) {
+                    echo "   ⚠️  WARNUNG: Überspringe User $user_id - kein Test-User (Login: {$check_row['login']})\n";
+                    continue;
+                }
+
                 // Delete from usr_data
                 $db->manipulate("DELETE FROM usr_data WHERE usr_id = " . $db->quote($user_id, 'integer'));
 
@@ -382,12 +465,79 @@ class IntegrationTestHelper
                 $db->manipulate("DELETE FROM object_data WHERE obj_id = " . $db->quote($user_id, 'integer'));
 
                 echo "   ✓ User gelöscht (ID: $user_id)\n";
-                $this->logger->info("Deleted test user: ID=$user_id");
             } catch (Exception $e) {
                 echo "   ✗ Fehler beim Löschen von User $user_id: " . $e->getMessage() . "\n";
-                $this->logger->warning("Failed to delete test user $user_id: " . $e->getMessage());
             }
         }
+    }
+
+    /**
+     * Emergency cleanup: Deletes ALL test objects by prefix (use with caution!)
+     * This is useful for cleaning up after crashed tests
+     */
+    public function emergencyCleanupByPrefix(): void
+    {
+        global $DIC;
+        $db = $DIC->database();
+
+        echo "⚠️  Möchtest du wirklich ALLE Test-Daten löschen?\n\n";
+        echo "Dies löscht:\n";
+        echo "• Alle Übungen mit \"AUTOTEST_ExStatusFile\" im Namen\n";
+        echo "• Alle User mit \"autotest_exstatusfile\" im Namen\n\n";
+        echo "Dieser Vorgang kann nicht rückgängig gemacht werden!\n\n";
+
+        // Find and delete test exercises
+        $query = "SELECT od.obj_id, od.title, oref.ref_id
+                  FROM object_data od
+                  LEFT JOIN object_reference oref ON od.obj_id = oref.obj_id
+                  WHERE od.type = 'exc'
+                  AND od.title LIKE 'AUTOTEST_ExStatusFile_%'";
+        $result = $db->query($query);
+
+        $deleted_exercises = 0;
+        while ($row = $db->fetchAssoc($result)) {
+            try {
+                // Delete exc_members entries
+                $db->manipulate("DELETE FROM exc_members WHERE obj_id = " . $db->quote($row['obj_id'], 'integer'));
+
+                // Delete object_reference if exists
+                if ($row['ref_id']) {
+                    $db->manipulate("DELETE FROM object_reference WHERE ref_id = " . $db->quote($row['ref_id'], 'integer'));
+                }
+
+                // Delete object_data
+                $db->manipulate("DELETE FROM object_data WHERE obj_id = " . $db->quote($row['obj_id'], 'integer'));
+
+                echo "   ✓ Übung gelöscht: {$row['title']} (ObjID: {$row['obj_id']})\n";
+                $deleted_exercises++;
+            } catch (Exception $e) {
+                echo "   ✗ Fehler: " . $e->getMessage() . "\n";
+            }
+        }
+
+        // Find and delete test users
+        $query = "SELECT usr_id, login
+                  FROM usr_data
+                  WHERE login LIKE 'autotest_exstatusfile_%'";
+        $result = $db->query($query);
+
+        $deleted_users = 0;
+        while ($row = $db->fetchAssoc($result)) {
+            try {
+                // Delete from usr_data
+                $db->manipulate("DELETE FROM usr_data WHERE usr_id = " . $db->quote($row['usr_id'], 'integer'));
+
+                // Delete from object_data
+                $db->manipulate("DELETE FROM object_data WHERE obj_id = " . $db->quote($row['usr_id'], 'integer'));
+
+                echo "   ✓ User gelöscht: {$row['login']} (ID: {$row['usr_id']})\n";
+                $deleted_users++;
+            } catch (Exception $e) {
+                echo "   ✗ Fehler: " . $e->getMessage() . "\n";
+            }
+        }
+
+        echo "✅ Notfall-Cleanup abgeschlossen: $deleted_exercises Übungen, $deleted_users User gelöscht\n";
     }
 
     // ==================== Private Helper Methods ====================
@@ -520,9 +670,10 @@ class IntegrationTestHelper
             $temp_dir = sys_get_temp_dir() . '/test_valid_csv_' . uniqid();
             mkdir($temp_dir, 0755, true);
 
-            // Create user folders and status files
+            // Create user folders with proper naming convention
+            $user_folders = [];
             foreach ($users_data as $user_data) {
-                // Get user login
+                // Get user info
                 $query = "SELECT login, firstname, lastname FROM usr_data WHERE usr_id = " . $db->quote($user_data['user_id'], 'integer');
                 $result = $db->query($query);
                 $user_row = $db->fetchAssoc($result);
@@ -531,35 +682,45 @@ class IntegrationTestHelper
                     throw new Exception("User {$user_data['user_id']} not found");
                 }
 
-                // Create user folder
-                $user_folder = $temp_dir . '/' . $user_row['login'];
+                // Create user folder with proper naming: Lastname_Firstname_Login_UserID
+                $folder_name = $user_row['lastname'] . '_' . $user_row['firstname'] . '_' .
+                               $user_row['login'] . '_' . $user_data['user_id'];
+                $user_folder = $temp_dir . '/' . $folder_name;
                 mkdir($user_folder, 0755, true);
 
-                // Create valid CSV status file
-                $status_content = "update,usr_id,login,lastname,firstname,status,mark,notice,comment,plagiarism,plag_comment\n";
-                $status_content .= "1," . $user_data['user_id'] . "," . $user_row['login'] . ",";
-                $status_content .= $user_row['lastname'] . "," . $user_row['firstname'] . ",";
-                $status_content .= $user_data['status'] . "," . $user_data['mark'] . ",,";
-                $status_content .= $user_data['comment'] . ",,\n";
-
-                file_put_contents($user_folder . '/status.csv', $status_content);
+                $user_folders[$user_data['user_id']] = [
+                    'folder_name' => $folder_name,
+                    'user_data' => $user_data,
+                    'user_row' => $user_row
+                ];
             }
+
+            // Create a SINGLE consolidated CSV file with ALL users
+            $status_content = "update,usr_id,login,lastname,firstname,status,mark,notice,comment,plagiarism,plag_comment\n";
+            foreach ($user_folders as $user_id => $info) {
+                $status_content .= "1," . $user_id . "," . $info['user_row']['login'] . ",";
+                $status_content .= $info['user_row']['lastname'] . "," . $info['user_row']['firstname'] . ",";
+                $status_content .= $info['user_data']['status'] . "," . $info['user_data']['mark'] . ",,";
+                $status_content .= $info['user_data']['comment'] . ",,\n";
+            }
+            file_put_contents($temp_dir . '/status.csv', $status_content);
 
             // Create ZIP
             $zip_path = sys_get_temp_dir() . '/valid_csv_status_' . uniqid() . '.zip';
             $zip = new ZipArchive();
             $zip->open($zip_path, ZipArchive::CREATE);
 
-            // Add all status files to ZIP
-            foreach ($users_data as $user_data) {
-                $query = "SELECT login FROM usr_data WHERE usr_id = " . $db->quote($user_data['user_id'], 'integer');
-                $result = $db->query($query);
-                $user_row = $db->fetchAssoc($result);
-
-                if ($user_row) {
-                    $zip->addFile($temp_dir . '/' . $user_row['login'] . '/status.csv', $user_row['login'] . '/status.csv');
-                }
+            // Add user folders to ZIP
+            foreach ($user_folders as $info) {
+                // Add empty .gitkeep file to ensure folder exists in ZIP
+                $dummy_file = $temp_dir . '/' . $info['folder_name'] . '/.gitkeep';
+                file_put_contents($dummy_file, '');
+                $zip->addFile($dummy_file, $info['folder_name'] . '/.gitkeep');
             }
+
+            // Add the consolidated status.csv at root level
+            $zip->addFile($temp_dir . '/status.csv', 'status.csv');
+
             $zip->close();
 
             // Read ZIP content
@@ -570,7 +731,7 @@ class IntegrationTestHelper
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
-                'zip_content' => base64_encode($zip_content)
+                'zip_content' => $zip_content
             ]);
 
             // Cleanup
@@ -646,7 +807,7 @@ class IntegrationTestHelper
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
-                'zip_content' => base64_encode($zip_content)
+                'zip_content' => $zip_content
             ]);
 
             // Cleanup
@@ -698,7 +859,7 @@ class IntegrationTestHelper
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
-                'zip_content' => base64_encode($zip_content)
+                'zip_content' => $zip_content
             ]);
 
             // Cleanup
@@ -744,7 +905,7 @@ class IntegrationTestHelper
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
-                'zip_content' => base64_encode($zip_content)
+                'zip_content' => $zip_content
             ]);
 
             // Cleanup
@@ -774,7 +935,7 @@ class IntegrationTestHelper
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
-                'zip_content' => base64_encode($fake_zip_content)
+                'zip_content' => $fake_zip_content
             ]);
 
             // If we reach here, malformed ZIP was NOT rejected
@@ -812,7 +973,7 @@ class IntegrationTestHelper
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
-                'zip_content' => base64_encode($zip_content)
+                'zip_content' => $zip_content
             ]);
 
             // Cleanup

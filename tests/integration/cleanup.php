@@ -4,19 +4,30 @@ declare(strict_types=1);
 /**
  * Cleanup Script for Integration Tests
  *
- * Removes all test data created by integration tests:
- * - Test exercises (TEST_Exercise_*)
- * - Test users (test_user_*)
- * - Test files and submissions
+ * Removes all test data created by integration tests.
+ * Can be used after --keep-data tests to clean up manually.
+ *
+ * Uses TestHelper's emergencyCleanupByPrefix() which searches for:
+ * - Test exercises: AUTOTEST_ExStatusFile_*
+ * - Test users: autotest_exstatusfile_*
+ *
+ * Also cleans up legacy test data:
+ * - Old exercises: TEST_Exercise_*
+ * - Old users: test_user_*
  *
  * @author Integration Test Suite
- * @version 1.0.0
+ * @version 2.0.0
  */
 
 // Bootstrap ILIAS
-chdir('/var/www/StudOn');
-require_once '/var/www/StudOn/libs/composer/vendor/autoload.php';
-require_once '/var/www/StudOn/ilias.php';
+chdir(__DIR__ . '/../../../../../../../../../');
+require_once './ilias.php';
+
+// Initialize ILIAS
+ilInitialisation::initILIAS();
+
+// Load TestHelper
+require_once __DIR__ . '/TestHelper.php';
 
 class TestDataCleanup
 {
@@ -40,22 +51,47 @@ class TestDataCleanup
         echo "═══════════════════════════════════════════════════════\n\n";
 
         echo "⚠️  This will delete ALL test data (exercises, users, etc.)\n";
-        echo "   Test objects start with: TEST_Exercise_, TEST_Assignment_\n";
-        echo "   Test users start with: test_user_\n\n";
+        echo "   New prefixes:\n";
+        echo "     - Übungen: AUTOTEST_ExStatusFile_*\n";
+        echo "     - User: autotest_exstatusfile_*\n";
+        echo "   Legacy prefixes (falls vorhanden):\n";
+        echo "     - Übungen: TEST_Exercise_*\n";
+        echo "     - User: test_user_*\n\n";
 
-        echo "Continue? [y/N]: ";
-        $confirmation = trim(fgets(STDIN));
+        // Check if running from CLI or web
+        $is_cli = php_sapi_name() === 'cli';
 
-        if (strtolower($confirmation) !== 'y') {
-            echo "Cancelled.\n";
-            exit(0);
+        if ($is_cli) {
+            echo "Continue? [y/N]: ";
+            $confirmation = trim(fgets(STDIN));
+
+            if (strtolower($confirmation) !== 'y') {
+                echo "Cancelled.\n";
+                exit(0);
+            }
+        } else {
+            // Web interface - require confirmation
+            if (!isset($_GET['confirm']) || $_GET['confirm'] !== 'yes') {
+                echo "<h2>Bestätigung erforderlich</h2>\n";
+                echo "<p>Bist du sicher, dass du alle Test-Daten löschen möchtest?</p>\n";
+                echo "<p><a href='?confirm=yes' style='color: red; font-weight: bold;'>JA, ALLE TEST-DATEN LÖSCHEN</a></p>\n";
+                echo "<p><a href='../'>Abbrechen</a></p>\n";
+                exit;
+            }
         }
 
         echo "\n";
 
         try {
-            $this->cleanupTestExercises();
-            $this->cleanupTestUsers();
+            // Use TestHelper's emergency cleanup for new prefixes
+            $helper = new IntegrationTestHelper(1);
+            $helper->emergencyCleanupByPrefix();
+
+            echo "\n";
+
+            // Also clean up legacy test data
+            $this->cleanupLegacyTestData();
+
             $this->printResults();
 
         } catch (Exception $e) {
@@ -65,9 +101,19 @@ class TestDataCleanup
     }
 
     /**
-     * Delete all test exercises
+     * Clean up old test data with legacy prefixes
      */
-    private function cleanupTestExercises(): void
+    public function cleanupLegacyTestData(): void
+    {
+        echo "🔍 Suche nach Legacy-Test-Daten...\n\n";
+        $this->cleanupLegacyTestExercises();
+        $this->cleanupLegacyTestUsers();
+    }
+
+    /**
+     * Delete all legacy test exercises (TEST_Exercise_* prefix)
+     */
+    private function cleanupLegacyTestExercises(): void
     {
         echo "🗑️  Cleaning up test exercises...\n";
 
@@ -124,9 +170,9 @@ class TestDataCleanup
     }
 
     /**
-     * Delete all test users
+     * Delete all legacy test users (test_user_* prefix)
      */
-    private function cleanupTestUsers(): void
+    private function cleanupLegacyTestUsers(): void
     {
         echo "🗑️  Cleaning up test users...\n";
 

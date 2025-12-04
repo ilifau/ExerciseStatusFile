@@ -162,10 +162,21 @@ if (!$DIC->rbac()->system()->checkAccess('visible', SYSTEM_FOLDER_ID)) {
             👥 Nur Team-Tests
         </button>
 
+        <button type="submit" name="action" value="run_notifications" class="button">
+            📧 Nur E-Mail-Benachrichtigungs-Tests
+        </button>
+
         <button type="submit" name="action" value="cleanup" class="button danger">
             🗑️ Test-Daten aufräumen
         </button>
     </form>
+
+    <div style="margin: 10px 0; padding: 10px; background: #2d2d30; border-radius: 4px; font-size: 13px;">
+        <strong>ℹ️ Cleanup:</strong><br>
+        Löscht ALLE Test-Daten:<br>
+        • Übungen: <code>AUTOTEST_ExStatusFile_*</code><br>
+        • User: <code>autotest_exstatusfile_*</code>
+    </div>
 
     <?php
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
@@ -216,14 +227,36 @@ if (!$DIC->rbac()->system()->checkAccess('visible', SYSTEM_FOLDER_ID)) {
                     $runner->runTeamTests();
                     break;
 
+                case 'run_notifications':
+                    echo "═══════════════════════════════════════════════════════\n";
+                    echo "  E-Mail Benachrichtigungs-Tests\n";
+                    echo "═══════════════════════════════════════════════════════\n\n";
+                    if ($parent_ref_id !== 1) {
+                        echo "ℹ️  Parent Category: RefID $parent_ref_id\n\n";
+                    }
+                    require_once __DIR__ . '/TestHelper.php';
+                    require_once __DIR__ . '/test-runner-core.php';
+                    $runner = new IntegrationTestRunner($parent_ref_id);
+                    $runner->runTeamNotificationTests();
+                    break;
+
                 case 'cleanup':
                     echo "═══════════════════════════════════════════════════════\n";
                     echo "  Räume Test-Daten auf\n";
                     echo "═══════════════════════════════════════════════════════\n\n";
+
                     require_once __DIR__ . '/TestHelper.php';
+
+                    echo "🔍 Suche nach Test-Objekten...\n";
+                    echo "   - Übungen: AUTOTEST_ExStatusFile_*\n";
+                    echo "   - User: autotest_exstatusfile_*\n\n";
+
                     $helper = new IntegrationTestHelper($parent_ref_id);
-                    $helper->cleanupAll();
+                    $helper->emergencyCleanupByPrefix();
+
                     echo "\n✅ Cleanup abgeschlossen!\n";
+                    echo "\nℹ️  Dieser Cleanup findet ALLE Test-Objekte anhand der Präfixe,\n";
+                    echo "   auch wenn sie nach einem --keep-data Test übrig geblieben sind.\n";
                     break;
             }
         } catch (Exception $e) {
@@ -260,18 +293,44 @@ if (!$DIC->rbac()->system()->checkAccess('visible', SYSTEM_FOLDER_ID)) {
             <li>Geänderte Dateien → bekommen <code>_korrigiert</code></li>
             <li>Unveränderte Dateien → behalten Original-Namen</li>
         </ul>
+
+        <strong>✅ E-Mail Benachrichtigungen:</strong>
+        <ul>
+            <li>Team-Feedback triggert Benachrichtigungen an alle Mitglieder</li>
+            <li>Mehrere Teams erhalten separate Benachrichtigungen</li>
+            <li>Duplicate-Prevention verhindert Mehrfach-Mails</li>
+            <li>Prüft: Nur bei Feedback-Dateien (nicht bei Status-Updates)</li>
+            <li>Läuft im Debug-Modus (keine echten E-Mails)</li>
+        </ul>
+    </div>
+
+    <div class="warning">
+        <strong>⚠️ E-Mail Benachrichtigungen:</strong><br>
+        Der Notification-Test läuft standardmäßig im <strong>Debug-Modus</strong>.<br>
+        <br>
+        <strong>Debug-Modus (<code>DEBUG_EMAIL_NOTIFICATIONS = true</code>):</strong><br>
+        • Keine echten E-Mails werden verschickt<br>
+        • Nur Log-Einträge werden erstellt<br>
+        • Sicher für Tests auf Produktionssystemen<br>
+        <br>
+        <strong>Produktiv-Modus (<code>DEBUG_EMAIL_NOTIFICATIONS = false</code>):</strong><br>
+        • Echte E-Mails werden verschickt!<br>
+        • Nur auf Test-Systemen verwenden<br>
     </div>
 
     <h2>🧹 Cleanup</h2>
 
     <div class="warning">
         <strong>⚠️ Test-Daten:</strong><br>
-        Tests erstellen Objekte mit Präfix <code>TEST_</code>:<br>
-        • Übungen: <code>TEST_Exercise_*</code><br>
-        • User: <code>test_user_*</code><br>
-        • Teams: <code>TEST_Team_*</code><br>
+        Tests erstellen Objekte mit eindeutigen Präfixen:<br>
+        • Übungen: <code>AUTOTEST_ExStatusFile_*</code><br>
+        • User: <code>autotest_exstatusfile_*</code><br>
         <br>
-        Diese werden normalerweise automatisch aufgeräumt. Falls nicht, nutze den "Test-Daten aufräumen" Button.
+        Diese werden normalerweise automatisch aufgeräumt.<br>
+        <br>
+        <strong>🗑️ Manuelles Cleanup:</strong><br>
+        Der "Test-Daten aufräumen" Button findet ALLE Test-Objekte anhand der Präfixe
+        und funktioniert auch nach --keep-data Tests oder abgestürzten Tests.
     </div>
 
     <p style="margin-top: 40px; color: #888; font-size: 12px;">
