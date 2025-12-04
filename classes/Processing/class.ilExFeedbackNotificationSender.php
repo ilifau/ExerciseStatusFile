@@ -10,7 +10,8 @@ declare(strict_types=1);
 class ilExFeedbackNotificationSender
 {
     private ilLogger $logger;
-    private array $notified_users = [];
+    /** @var array Static to prevent duplicate notifications across multiple instances */
+    private static array $notified_users = [];
 
     public function __construct()
     {
@@ -42,7 +43,7 @@ class ilExFeedbackNotificationSender
             }
 
             // Prevent duplicates
-            if (isset($this->notified_users[$assignment_id][$user_id])) {
+            if (isset(self::$notified_users[$assignment_id][$user_id])) {
                 $stats['skipped']++;
                 return $stats;
             }
@@ -87,7 +88,7 @@ class ilExFeedbackNotificationSender
 
                 // Mark all as notified (prevents duplicates)
                 foreach ($recipient_ids as $uid) {
-                    $this->notified_users[$assignment_id][$uid] = true;
+                    self::$notified_users[$assignment_id][$uid] = true;
                 }
 
                 return $stats;
@@ -99,7 +100,7 @@ class ilExFeedbackNotificationSender
 
                 foreach ($recipient_ids as $recipient_id) {
                     // Prevent duplicates
-                    if (isset($this->notified_users[$assignment_id][$recipient_id])) {
+                    if (isset(self::$notified_users[$assignment_id][$recipient_id])) {
                         $stats['skipped']++;
                         continue;
                     }
@@ -108,7 +109,7 @@ class ilExFeedbackNotificationSender
                         // Send feedback notification (requires array of user IDs)
                         $notification_manager->sendFeedbackNotification($assignment_id, [$recipient_id]);
 
-                        $this->notified_users[$assignment_id][$recipient_id] = true;
+                        self::$notified_users[$assignment_id][$recipient_id] = true;
                         $stats['sent']++;
 
                     } catch (Exception $e) {
