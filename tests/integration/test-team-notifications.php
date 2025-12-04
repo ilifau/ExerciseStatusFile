@@ -27,13 +27,47 @@ class TeamNotificationTest
     private IntegrationTestHelper $helper;
     private ilLogger $logger;
     private array $test_results = [];
-    private array $notification_log = [];
+    private int $log_position = 0;
+    private ?string $log_file = null;
 
     public function __construct()
     {
         global $DIC;
         $this->logger = $DIC->logger()->root();
         $this->helper = new IntegrationTestHelper();
+        $this->log_file = $this->detectLogFile();
+    }
+
+    /**
+     * Detect the ILIAS log file path from settings
+     */
+    private function detectLogFile(): ?string
+    {
+        global $DIC;
+
+        // Try to get from ILIAS settings
+        try {
+            if (isset($DIC['ilSetting'])) {
+                $log_path = $DIC['ilSetting']->get('log_path');
+                $log_file = $DIC['ilSetting']->get('log_file');
+                if ($log_path && $log_file) {
+                    $full_path = rtrim($log_path, '/') . '/' . $log_file;
+                    if (file_exists($full_path) && is_readable($full_path)) {
+                        return $full_path;
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            // Ignore, try fallback
+        }
+
+        // Try environment variable
+        $env_log = getenv('ILIAS_LOG_FILE');
+        if ($env_log && file_exists($env_log) && is_readable($env_log)) {
+            return $env_log;
+        }
+
+        return null;
     }
 
     public function runAllTests(): void
@@ -42,6 +76,14 @@ class TeamNotificationTest
         echo "═══════════════════════════════════════════════════════\n";
         echo "  Team Feedback E-Mail Notification Test\n";
         echo "═══════════════════════════════════════════════════════\n\n";
+
+        // Show log file status
+        if ($this->log_file) {
+            echo "📁 Log file: {$this->log_file}\n\n";
+        } else {
+            echo "⚠️  Log file not detected - log-based verification will be skipped\n";
+            echo "   Set ILIAS_LOG_FILE environment variable or check ILIAS log settings\n\n";
+        }
 
         try {
             // Enable debug mode to capture notification attempts without sending real emails
@@ -109,15 +151,14 @@ class TeamNotificationTest
                 'team2_report.txt' => "FEEDBACK: Good job!"
             ]);
 
-            // 7. Capture log output before upload
-            $log_before = $this->captureLogEntries();
+            // 7. Mark log position before upload
+            $this->markLogPosition();
 
             // 8. Upload modified ZIP (this triggers notifications)
             $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
 
-            // 9. Capture log output after upload
-            $log_after = $this->captureLogEntries();
-            $new_logs = array_diff($log_after, $log_before);
+            // 9. Get new log entries since upload
+            $new_logs = $this->getNewLogEntries();
 
             echo "\n📋 Debug Log Analysis:\n";
 
@@ -192,10 +233,9 @@ class TeamNotificationTest
                 'report.txt' => "Feedback content"
             ]);
 
-            $log_before = $this->captureLogEntries();
+            $this->markLogPosition();
             $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
-            $log_after = $this->captureLogEntries();
-            $new_logs = array_diff($log_after, $log_before);
+            $new_logs = $this->getNewLogEntries();
 
             // Verify each team's members would be notified
             $team1_notified = $this->logsContainTeamNotification($new_logs, $team1_members);
@@ -241,7 +281,10 @@ class TeamNotificationTest
                 [['filename' => 'work.txt', 'content' => 'Original work']]
             );
 
-            echo "✅ Created team with 3 members\n";
+            echo "✅ Created team with 3 members: " . implode(', ', $team_members) . "\n";
+
+            // Mark log position before upload
+            $this->markLogPosition();
 
             // Upload feedback
             $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
@@ -249,15 +292,16 @@ class TeamNotificationTest
                 'work.txt' => "Modified feedback"
             ]);
 
-            $log_before = $this->captureLogEntries();
             $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
-            $log_after = $this->captureLogEntries();
-            $new_logs = array_diff($log_after, $log_before);
 
-            // Count how many times each user would be notified
-            $notification_counts = $this->countNotificationsPerUser($new_logs, $team_members);
+            // Read new log entries since upload
+            $new_logs = $this->getNewLogEntries();
 
-            echo "\n📊 Notification count per user:\n";
+            // Count notifications per user from logs
+            // Pattern: "DEBUG: Would notify X user(s): user_id1, user_id2, ..."
+            $notification_counts = $this->countNotificationsFromLogs($new_logs, $team_members);
+
+            echo "\n📊 Notification count per user (from logs):\n";
             foreach ($team_members as $user_id) {
                 $count = $notification_counts[$user_id] ?? 0;
                 $status = $count === 1 ? "✅" : "❌";
@@ -311,22 +355,84 @@ class TeamNotificationTest
         return $current_setting;
     }
 
-    private function captureLogEntries(): array
+    /**
+     * Mark current log file position
+     */
+    private function markLogPosition(): void
     {
-        // In a real implementation, you would read from ILIAS log files
-        // For this test, we'll use a simplified approach
-        global $DIC;
-
-        // Get recent log entries from ILIAS logging system
-        // This is a placeholder - actual implementation depends on ILIAS version
-        return [];
+        if ($this->log_file && file_exists($this->log_file)) {
+            $this->log_position = filesize($this->log_file);
+        } else {
+            $this->log_position = 0;
+        }
     }
 
+    /**
+     * Get log entries added since last markLogPosition() call
+     */
+    private function getNewLogEntries(): array
+    {
+        if (!$this->log_file || !file_exists($this->log_file)) {
+            echo "  ⚠️  Log file not available, skipping log analysis\n";
+            return [];
+        }
+
+        $handle = fopen($this->log_file, 'r');
+        if (!$handle) {
+            return [];
+        }
+
+        fseek($handle, $this->log_position);
+        $content = fread($handle, filesize($this->log_file) - $this->log_position);
+        fclose($handle);
+
+        if (empty($content)) {
+            return [];
+        }
+
+        return explode("\n", trim($content));
+    }
+
+    /**
+     * Count notifications per user from log entries
+     * Parses "DEBUG: Would notify X user(s): user_id1, user_id2, ..." entries
+     */
+    private function countNotificationsFromLogs(array $logs, array $user_ids): array
+    {
+        $counts = array_fill_keys($user_ids, 0);
+
+        foreach ($logs as $log) {
+            // Match DEBUG mode log: "DEBUG: Would notify X user(s): 123, 456, 789"
+            if (preg_match('/DEBUG: Would notify \d+ user\(s\): ([\d, ]+)/', $log, $matches)) {
+                $notified_ids = array_map('intval', explode(', ', $matches[1]));
+                foreach ($notified_ids as $notified_id) {
+                    if (isset($counts[$notified_id])) {
+                        $counts[$notified_id]++;
+                    }
+                }
+            }
+            // Match production mode log: "Sent X feedback notification(s) for assignment"
+            // This doesn't list individual users, so we check Mail system task logs
+            if (preg_match('/New mail system task: To: (\w+)/', $log, $matches)) {
+                // This captures username, not user_id - would need additional lookup
+                // For now, focus on DEBUG mode which logs user IDs
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Filter logs for notification-related entries
+     */
     private function analyzeNotificationLogs(array $logs): array
     {
         $entries = [];
         foreach ($logs as $log) {
-            if (stripos($log, 'notification') !== false || stripos($log, 'DEBUG MODE') !== false) {
+            if (stripos($log, 'notification') !== false ||
+                stripos($log, 'DEBUG MODE') !== false ||
+                stripos($log, 'Would notify') !== false ||
+                stripos($log, 'mail system task') !== false) {
                 $entries[] = $log;
             }
         }
@@ -335,11 +441,13 @@ class TeamNotificationTest
 
     private function logsContainTeamNotification(array $logs, array $member_ids): bool
     {
-        // Check if logs contain notification entries for all team members
-        // This is a simplified check - real implementation would parse actual logs
-
-        // For now, assume notification was triggered if feedback was uploaded
-        return true; // Placeholder
+        $counts = $this->countNotificationsFromLogs($logs, $member_ids);
+        foreach ($member_ids as $member_id) {
+            if (($counts[$member_id] ?? 0) > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function countDuplicateWarnings(array $logs): int
@@ -351,20 +459,6 @@ class TeamNotificationTest
             }
         }
         return $count;
-    }
-
-    private function countNotificationsPerUser(array $logs, array $user_ids): array
-    {
-        $counts = [];
-        foreach ($user_ids as $user_id) {
-            $counts[$user_id] = 0;
-            foreach ($logs as $log) {
-                if (stripos($log, "user $user_id") !== false || stripos($log, "user_id=$user_id") !== false) {
-                    $counts[$user_id]++;
-                }
-            }
-        }
-        return $counts;
     }
 
     private function recordResult(string $test_name, bool $passed): void
