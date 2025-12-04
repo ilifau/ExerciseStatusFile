@@ -23,6 +23,13 @@ Status-File und Multi-Feedback Erweiterung für ILIAS Übungen (Exercises).
 - Automatische Filterung: Submissions werden nicht als Feedback hochgeladen
 - Unterstützt Individual- und Team-Assignments
 
+### 4. E-Mail Benachrichtigungen ✨ NEU in v1.2.0
+- **Automatische E-Mail-Benachrichtigung** beim Feedback-Upload
+- Studenten werden benachrichtigt wenn Tutor Feedback-Dateien hochlädt
+- Funktioniert für Individual- und Team-Assignments
+- Bei Teams: Alle Team-Mitglieder werden benachrichtigt
+- **Debug-Modus für sichere Tests** (keine echten E-Mails während Entwicklung)
+
 ## Installation
 
 ### Voraussetzungen
@@ -89,6 +96,7 @@ php setup/setup.php update
    - Ganzes ZIP-Archiv erneut erstellen
    - In ILIAS hochladen
    - Feedback-Dateien werden automatisch verarbeitet
+   - **Studenten erhalten E-Mail-Benachrichtigung** (wenn aktiviert)
 
 ### Was wird hochgeladen?
 
@@ -159,40 +167,101 @@ Beim Upload werden Feedback-Dateien mit bestehenden Submissions verglichen:
 - Bei Teams: Submissions aller Team-Mitglieder werden berücksichtigt
 - Nur neue Dateien werden als Feedback hochgeladen
 
+## E-Mail Benachrichtigungen 📧
+
+### Funktionsweise
+
+Studenten erhalten automatisch eine E-Mail wenn der Tutor Feedback-Dateien hochlädt.
+
+**Wann wird benachrichtigt:**
+- ✅ Beim Upload von Feedback-**Dateien** (nicht nur Status-Updates)
+- ✅ Bei Individual-Assignments: Jeder Student einzeln
+- ✅ Bei Team-Assignments: Alle Team-Mitglieder
+
+**Wann NICHT:**
+- ❌ Bei reinen Status-Updates ohne Feedback-Dateien
+- ❌ Wenn User Benachrichtigungen deaktiviert hat (ILIAS Profil-Einstellung)
+
+### Debug-Modus ⚠️
+
+**Standard-Einstellung:** Debug-Modus ist **aktiviert**
+
+```php
+// classes/class.ilExerciseStatusFilePlugin.php (Zeile 17)
+const DEBUG_EMAIL_NOTIFICATIONS = true;  // ← Standard: sicher
+```
+
+**Im Debug-Modus:**
+- ❌ **Keine echten E-Mails** werden verschickt
+- ✅ Ausführliche Logs in `/var/www/StudOn/data/studon/ilias.log`
+- ✅ Admin-Benachrichtigungen im Browser (nur für Admins sichtbar)
+- ✅ **Sicher für Produktion** - keine Spam-Mails während Tests
+
+**Produktiv-Modus aktivieren (nach erfolgreichen Tests):**
+
+```php
+const DEBUG_EMAIL_NOTIFICATIONS = false;  // Echte E-Mails
+```
+
+**Empfohlener Workflow:**
+1. Erste 1-2 Wochen: Debug-Modus aktiv lassen
+2. Logs überwachen: `tail -f /var/www/StudOn/data/studon/ilias.log | grep notification`
+3. User-Feedback sammeln
+4. Optional: Debug-Modus deaktivieren
+
+**Weitere Informationen:**
+- [tests/NOTIFICATION_TEST_GUIDE.md](tests/NOTIFICATION_TEST_GUIDE.md) - Ausführliche Dokumentation
+- [tests/MODAL_TEST_GUIDE.md](tests/MODAL_TEST_GUIDE.md) - Test-Guide
+
 ## Tests
 
 Das Plugin verfügt über umfassende automatisierte Tests für Qualitätssicherung.
 
-### Integration Tests (NEU!)
+### Integration Tests
 
 **Vollautomatisierte Tests** des gesamten Multi-Feedback Workflows:
 - ✅ Individual & Team Assignments
 - ✅ Download → Upload Workflow
 - ✅ Status-File Verarbeitung (XLSX + CSV)
 - ✅ Checksum-basierte Datei-Umbenennung
+- ✅ **E-Mail Benachrichtigungen** (Team + Individual) ✨ NEU
 - ✅ Negative Tests (Error Handling)
 - ✅ Performance-Optimierungen
 
 **Tests ausführen:**
 
+**Option 1: Modal in ILIAS UI** (Empfohlen)
+1. Als Admin einloggen
+2. Übung öffnen → "Abgaben und Noten"
+3. Gelber Button **"🧪 Run Tests"** klicken
+4. Tests laufen automatisch im Modal
+
+**Option 2: CLI**
 ```bash
 cd tests/integration/
-
-# CLI (empfohlen)
 php run-all-tests.php --parent-ref=12345
-
-# Web Interface
-# Browser: /Customizing/.../ExerciseStatusFile/tests/integration/web-runner.php
 ```
+
+**Option 3: Web Interface**
+```
+Browser: /Customizing/.../ExerciseStatusFile/tests/integration/web-runner.php
+```
+
+**Test-Ergebnisse (v1.2.0):**
+- ✅ **12/12 Tests bestanden**
+- ⏱️ Dauer: ~9 Sekunden
+- 🧹 Automatisches Cleanup
 
 **Features:**
 - 🎯 **Parent RefID Support:** Tests erstellen Objekte in eigenem Ordner (nicht Root!)
 - 🧹 **Auto-Cleanup:** Test-Daten werden automatisch aufgeräumt
-- 📊 **15+ Test-Szenarien:** Individual, Team, CSV, Negative Tests
-- ⚡ **Schnell:** ~30 Sekunden für alle Tests
+- 📊 **12 Test-Szenarien:** Individual, Team, CSV, Notifications, Negative Tests
+- 📧 **Notification-Tests im Debug-Modus** (keine echten E-Mails)
+- ⚡ **Schnell:** ~9 Sekunden für alle Tests
 
 **Wichtig für Admins:**
-- Siehe [docs/ADMIN_GUIDE_TESTS.md](docs/ADMIN_GUIDE_TESTS.md) für detaillierte Anleitung
+- Siehe [tests/MODAL_TEST_GUIDE.md](tests/MODAL_TEST_GUIDE.md) für Modal-Anleitung
+- Siehe [docs/ADMIN_GUIDE_TESTS.md](docs/ADMIN_GUIDE_TESTS.md) für detaillierte Dokumentation
 - **Immer Parent RefID setzen!** (z.B. Test-Ordner RefID)
 - Tests sind sicher und löschen alle temporären Daten
 
@@ -232,31 +301,16 @@ GPL-3.0
 
 ## Version
 
-1.3.0 - 2025-01-30
+**Aktuelle Version:** 1.2.0 - 2025-01-04
 
 ### Changelog
 
-**1.3.0** (2025-01-30)
-- ✅ **Integration Tests:** Vollautomatisiertes Test-Framework mit 15+ Szenarien
-- ✅ **Negative Tests:** Error Handling Tests für robusteren Code
-- ✅ **CSV Status-File Support:** Tests für CSV zusätzlich zu Excel
-- ✅ **Parent RefID:** Tests können in eigenem Ordner erstellt werden (nicht Root)
-- ✅ **Checksum-basierte Status-File Auswahl:** Intelligente Erkennung welches File verwendet werden soll
-- ✅ **Performance:** Optimiertes Batch-Loading von Team-Daten
-- ✅ **Code-Cleanup:** Entfernte Debug-Logs, optimierte Methoden
-- 📚 **Dokumentation:** Admin Guide für Tests, KI-Infos für Entwickler
+Siehe [CHANGELOG.md](CHANGELOG.md) für vollständige Version-Historie.
 
-**1.2.0** (2025-01-20)
-- Feedback-Upload ohne Status-Updates möglich
-- Verbesserte Team-ID Erkennung
-- Optimierte Performance (weniger DB-Abfragen)
-- Bug-Fix: ZIP-Validierung jetzt optional
-
-**1.1.0**
-- Multi-Feedback Upload für Teams
-- Automatische Filterung von Submissions
-
-**1.0.0**
-- Initial Release
-- Status-File Export/Import
-- Multi-Feedback Download
+**Highlights v1.2.0:**
+- ✅ **E-Mail Benachrichtigungen:** Automatische Notifications beim Feedback-Upload
+- ✅ **Debug-Modus:** Sichere Tests ohne echte E-Mails
+- ✅ **Performance:** Batch-Loading für Team-Daten (~10x schneller)
+- ✅ **Tests:** 12/12 Integration Tests bestanden in 8.93s
+- ✅ **Modal-Integration:** "🧪 Run Tests" Button in ILIAS UI
+- 📚 **Dokumentation:** Umfassende Guides für Notifications und Tests
