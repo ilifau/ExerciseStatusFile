@@ -1,7 +1,6 @@
 <?php
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
-use ILIAS\Logging\Logger;
 
 class ilPluginExAssignmentStatusFile extends ilExcel
 {
@@ -21,7 +20,6 @@ class ilPluginExAssignmentStatusFile extends ilExcel
     protected $allow_plag_update = false;
     protected bool $loadfromfile_success = false;
     protected bool $writetofile_success = false;
-    protected ilLogger $log;
 
     public function init(ilExAssignment $assignment) {
         $this->members = [];
@@ -30,9 +28,6 @@ class ilPluginExAssignmentStatusFile extends ilExcel
         $this->updates_applied = false;
         $this->error = null;
         $this->assignment = $assignment;
-
-        global $DIC;
-        $this->log = $DIC->logger()->root();        
 
         $this->initMembers();
         if ($this->assignment->getAssignmentType()->usesTeams()) {
@@ -117,7 +112,6 @@ class ilPluginExAssignmentStatusFile extends ilExcel
         } catch (Exception $e) {
             $this->error = $e->getMessage();
             $this->writetofile_success = false;
-            $this->log->error("Status file write error: " . $e->getMessage());
             throw $e;
         }
     }
@@ -130,22 +124,22 @@ class ilPluginExAssignmentStatusFile extends ilExcel
     protected function initMembers() {
         global $DIC;
         $db = $DIC->database();
-        
+
         try {
             $exercise_obj_id = $this->assignment->getExerciseId();
             $assignment_id = $this->assignment->getId();
-            
+
             $member_query = "SELECT usr_id FROM exc_members WHERE obj_id = " . $db->quote($exercise_obj_id, 'integer');
             $member_result = $db->query($member_query);
-            
+
             $all_member_ids = [];
             while ($row = $db->fetchAssoc($member_result)) {
                 $all_member_ids[] = (int)$row['usr_id'];
-            }     
+            }
 
             $this->members = $all_member_ids;
             $member_ids = $all_member_ids;
-            
+
             if (empty($member_ids)) {
                 $this->members = [];
                 return;
@@ -215,7 +209,6 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             }
             
         } catch (Exception $e) {
-            $this->log->error("Error in initMembers: " . $e->getMessage());
             $this->members = [];
         }
     }
@@ -229,7 +222,7 @@ class ilPluginExAssignmentStatusFile extends ilExcel
         }
 
         $index = array_flip($this->member_titles);
-        
+
         foreach ($sheet as $rowdata) {
             $data = [];
             $data['update'] = (bool)  $rowdata[$index['update']];
@@ -241,7 +234,7 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             $data['comment'] = (string) $rowdata[$index['comment']];
             $data['plag_flag'] = ((string) $rowdata[$index['plagiarism']] ? (string) $rowdata[$index['plagiarism']] : 'none');
             $data['plag_comment'] = (string) $rowdata[$index['plag_comment']];
-            
+
             if (!$data['update'] || !isset($this->members[$data['usr_id']])) {
                 continue;
             }
@@ -532,7 +525,6 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             }
             
         } catch (Exception $e) {
-            $this->log->error("Error in writeMemberSheet: " . $e->getMessage());
             throw $e;
         }
     }   
@@ -595,7 +587,6 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             }
             
         } catch (Exception $e) {
-            $this->log->error("Error in initTeams: " . $e->getMessage());
             $this->teams = [];
         }
     }

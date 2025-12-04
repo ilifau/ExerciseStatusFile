@@ -14,7 +14,7 @@ class ilExerciseStatusFilePlugin extends ilUserInterfaceHookPlugin
      *
      * Debug-Infos sind nur für Admins sichtbar
      */
-    const DEBUG_EMAIL_NOTIFICATIONS = false;
+    const DEBUG_EMAIL_NOTIFICATIONS = true;
 
     public function getPluginName(): string
     {
