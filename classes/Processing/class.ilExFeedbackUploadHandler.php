@@ -1300,14 +1300,20 @@ class ilExFeedbackUploadHandler
     private function cleanupTempDirectory(string $temp_dir): void
     {
         try {
-            $files = glob($temp_dir . '/*');
-            if ($files) {
-                foreach ($files as $file) {
-                    if (is_file($file)) {
-                        unlink($file);
-                    } elseif (is_dir($file)) {
-                        $this->cleanupTempDirectory($file);
-                    }
+            // Include hidden files with glob pattern
+            $files = array_merge(
+                glob($temp_dir . '/*') ?: [],
+                glob($temp_dir . '/.*') ?: []
+            );
+            foreach ($files as $file) {
+                // Skip . and .. entries
+                if (basename($file) === '.' || basename($file) === '..') {
+                    continue;
+                }
+                if (is_file($file)) {
+                    unlink($file);
+                } elseif (is_dir($file)) {
+                    $this->cleanupTempDirectory($file);
                 }
             }
             rmdir($temp_dir);
