@@ -342,6 +342,7 @@ class IntegrationTestHelper
 
     /**
      * Uploads modified multi-feedback ZIP
+     * Returns upload result including warnings
      */
     public function uploadMultiFeedbackZip(
         int $assignment_id,
@@ -356,17 +357,120 @@ class IntegrationTestHelper
         $parameters = [
             'assignment_id' => $assignment_id,
             'tutor_id' => $tutor_id,
-            'uploaded_file' => [
-                'tmp_name' => $zip_path,
-                'name' => basename($zip_path)
-            ]
+            'zip_path' => $zip_path
         ];
 
-        ob_start();
-        $handler->handleFeedbackUpload($parameters);
-        $output = ob_get_clean();
+        try {
+            $handler->handleFeedbackUpload($parameters);
 
-        return json_decode($output, true) ?? [];
+            // Get processing stats and warnings
+            $stats = $handler->getProcessingStats();
+            $warnings = $handler->getWarnings();
+
+            return [
+                'success' => true,
+                'stats' => $stats,
+                'warnings' => $warnings
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'warnings' => $handler->getWarnings()
+            ];
+        }
+    }
+
+    /**
+     * Modifies a specific status file (xlsx or csv) in a ZIP
+     * Used for testing status file detection
+     *
+     * @param string $zip_path Path to the ZIP file
+     * @param string $type 'xlsx' or 'csv'
+     * @param array $updates Array of status updates [['user_id' => X, 'update' => 1, 'status' => 'passed'], ...]
+     * @return string Path to the modified ZIP
+     */
+    public function modifyStatusFileInZip(string $zip_path, string $type, array $updates): string
+    {
+        $extract_dir = sys_get_temp_dir() . '/test_status_' . uniqid();
+        mkdir($extract_dir, 0777, true);
+
+        // Extract ZIP
+        $zip = new ZipArchive();
+        if ($zip->open($zip_path) !== true) {
+            throw new Exception("Failed to open ZIP: $zip_path");
+        }
+        $zip->extractTo($extract_dir);
+        $zip->close();
+
+        // Find and modify the status file
+        $status_file = $extract_dir . '/status.' . $type;
+
+        if ($type === 'csv') {
+            // Read existing CSV or create new
+            $csv_data = [];
+            if (file_exists($status_file)) {
+                $handle = fopen($status_file, 'r');
+                $headers = fgetcsv($handle, 0, ';');
+                while (($row = fgetcsv($handle, 0, ';')) !== false) {
+                    $csv_data[] = array_combine($headers, $row);
+                }
+                fclose($handle);
+            }
+
+            // Apply updates
+            foreach ($updates as $update) {
+                $found = false;
+                foreach ($csv_data as &$row) {
+                    if (isset($row['usr_id']) && (int)$row['usr_id'] === (int)$update['user_id']) {
+                        $row['update'] = $update['update'] ?? 0;
+                        if (isset($update['status'])) {
+                            $row['status'] = $update['status'];
+                        }
+                        $found = true;
+                        break;
+                    }
+                }
+                // If user not found, add new row
+                if (!$found && !empty($csv_data)) {
+                    $new_row = $csv_data[0]; // Copy structure from first row
+                    $new_row['usr_id'] = $update['user_id'];
+                    $new_row['update'] = $update['update'] ?? 0;
+                    if (isset($update['status'])) {
+                        $new_row['status'] = $update['status'];
+                    }
+                    $csv_data[] = $new_row;
+                }
+            }
+
+            // Write modified CSV
+            if (!empty($csv_data)) {
+                $handle = fopen($status_file, 'w');
+                fputcsv($handle, array_keys($csv_data[0]), ';');
+                foreach ($csv_data as $row) {
+                    fputcsv($handle, array_values($row), ';');
+                }
+                fclose($handle);
+            }
+
+        } elseif ($type === 'xlsx') {
+            // For xlsx, we'd need PhpSpreadsheet - simplified version for tests
+            // Just modify the file timestamp to trigger checksum change
+            if (file_exists($status_file)) {
+                touch($status_file);
+                // Append some bytes to change the checksum
+                file_put_contents($status_file, file_get_contents($status_file) . "\n");
+            }
+        }
+
+        // Create new ZIP
+        $new_zip_path = sys_get_temp_dir() . '/test_status_modified_' . uniqid() . '.zip';
+        $this->createZipFromDirectory($extract_dir, $new_zip_path);
+
+        // Cleanup extract dir
+        $this->rmdirRecursive($extract_dir);
+
+        return $new_zip_path;
     }
 
     /**

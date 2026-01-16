@@ -100,21 +100,25 @@ class ilExMultiFeedbackDownloadHandler
         $temp_dir = $this->createTempDirectory('multi_feedback');
         $zip_filename = $this->generateZIPFilename($assignment, $teams);
         $zip_path = $temp_dir . '/' . $zip_filename;
-        
+
         $zip = new \ZipArchive();
         if ($zip->open($zip_path, \ZipArchive::CREATE) !== true) {
             throw new Exception("Could not create ZIP file: $zip_path");
         }
-        
+
         try {
-            $this->addStatusFiles($zip, $assignment, $teams, $temp_dir);
+            // Status-Dateien hinzufügen und deren Checksums erfassen
+            $status_checksums = $this->addStatusFiles($zip, $assignment, $teams, $temp_dir);
             $submission_checksums = $this->addTeamSubmissionsFromArrays($zip, $assignment, $teams);
-            $this->addChecksumsFile($zip, $submission_checksums, $temp_dir);
+
+            // Alle Checksums zusammenführen (Status + Submissions)
+            $all_checksums = array_merge($status_checksums, $submission_checksums);
+            $this->addChecksumsFile($zip, $all_checksums, $temp_dir);
             $this->addReadme($zip, $assignment, $teams, $temp_dir);
 
             $zip->close();
             return $zip_path;
-            
+
         } catch (Exception $e) {
             $zip->close();
             throw $e;
@@ -262,30 +266,50 @@ class ilExMultiFeedbackDownloadHandler
     }    
 
     /**
-     * Status-Files erstellen
+     * Status-Files erstellen und Checksums zurückgeben
+     * @return array Checksums der Status-Dateien für spätere Änderungserkennung
      */
-    private function addStatusFiles(\ZipArchive &$zip, \ilExAssignment $assignment, array $teams, string $temp_dir): void
+    private function addStatusFiles(\ZipArchive &$zip, \ilExAssignment $assignment, array $teams, string $temp_dir): array
     {
+        $checksums = [];
         $status_file = new ilPluginExAssignmentStatusFile();
         $status_file->init($assignment);
-        
+
         // XLSX
         $status_file->setFormat(ilPluginExAssignmentStatusFile::FORMAT_XML);
         $xlsx_path = $temp_dir . '/status.xlsx';
         $status_file->writeToFile($xlsx_path);
-        
+
         if ($status_file->isWriteToFileSuccess() && file_exists($xlsx_path)) {
             $zip->addFile($xlsx_path, "status.xlsx");
+            // Checksum für Änderungserkennung beim Upload
+            $checksums['status.xlsx'] = [
+                'md5' => md5_file($xlsx_path),
+                'sha256' => hash_file('sha256', $xlsx_path),
+                'size' => filesize($xlsx_path),
+                'type' => 'status_file'
+            ];
         }
-        
+
         // CSV
         $status_file->setFormat(ilPluginExAssignmentStatusFile::FORMAT_CSV);
         $csv_path = $temp_dir . '/status.csv';
         $status_file->writeToFile($csv_path);
-        
+
         if ($status_file->isWriteToFileSuccess() && file_exists($csv_path)) {
             $zip->addFile($csv_path, "status.csv");
+            // Checksum für Änderungserkennung beim Upload
+            $checksums['status.csv'] = [
+                'md5' => md5_file($csv_path),
+                'sha256' => hash_file('sha256', $csv_path),
+                'size' => filesize($csv_path),
+                'type' => 'status_file'
+            ];
         }
+
+        $this->logger->info("Added status files with checksums: xlsx=" . (isset($checksums['status.xlsx']) ? 'yes' : 'no') . ", csv=" . (isset($checksums['status.csv']) ? 'yes' : 'no'));
+
+        return $checksums;
     }
     
     /**

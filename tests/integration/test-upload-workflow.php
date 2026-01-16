@@ -12,9 +12,11 @@ declare(strict_types=1);
  * 5. Modify files (simulate tutor edits)
  * 6. Upload modified ZIP
  * 7. Verify results (checksums, renames, etc.)
+ * 8. Test status file detection (xlsx vs csv)
+ * 9. Test user warnings system
  *
  * @author Integration Test Suite
- * @version 1.0.0
+ * @version 1.1.0 (2026-01-16: Added status file and warning tests)
  */
 
 // Bootstrap ILIAS
@@ -50,6 +52,9 @@ class MultiFeedbackUploadWorkflowTest
             $this->testTeamAssignmentWorkflow();
             $this->testModifiedFileRename();
             $this->testChecksumValidation();
+            $this->testStatusFileChecksums();
+            $this->testStatusFileDetection();
+            $this->testWarningsInResponse();
 
             $this->printResults();
 
@@ -303,6 +308,186 @@ class MultiFeedbackUploadWorkflowTest
             echo "✅ Unchanged file correctly kept original name (checksum matched)\n";
         } else {
             echo "❌ File was renamed even though it wasn't modified\n";
+        }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 5: Status File Checksums in ZIP
+     * Verifies that status.xlsx and status.csv have checksums in checksums.json
+     */
+    private function testStatusFileChecksums(): void
+    {
+        echo "📋 Test 5: Status File Checksums\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // 1. Create simple test case
+        $exercise = $this->helper->createTestExercise('_StatusChecksum');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test5');
+
+        $users = $this->helper->createTestUsers(1);
+        $user = $users[0];
+
+        // 2. Create submission
+        $this->helper->createTestSubmission(
+            $assignment,
+            $user->getId(),
+            [['filename' => 'test.txt', 'content' => 'Test content']]
+        );
+
+        // 3. Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // 4. Extract and check checksums.json
+        $zip = new ZipArchive();
+        $zip->open($zip_path);
+
+        $checksums_content = $zip->getFromName('checksums.json');
+        $zip->close();
+
+        $checksums = json_decode($checksums_content, true);
+
+        // 5. Verify status file checksums exist
+        $has_xlsx_checksum = isset($checksums['status.xlsx']) &&
+                             isset($checksums['status.xlsx']['sha256']) &&
+                             isset($checksums['status.xlsx']['type']) &&
+                             $checksums['status.xlsx']['type'] === 'status_file';
+
+        $has_csv_checksum = isset($checksums['status.csv']) &&
+                            isset($checksums['status.csv']['sha256']) &&
+                            isset($checksums['status.csv']['type']) &&
+                            $checksums['status.csv']['type'] === 'status_file';
+
+        $this->recordResult('StatusChecksum: status.xlsx has checksum with sha256', $has_xlsx_checksum);
+        $this->recordResult('StatusChecksum: status.csv has checksum with sha256', $has_csv_checksum);
+
+        if ($has_xlsx_checksum && $has_csv_checksum) {
+            echo "✅ Both status files have checksums in checksums.json\n";
+        } else {
+            echo "❌ Missing status file checksums\n";
+        }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 6: Status File Detection (xlsx vs csv)
+     * Verifies that the system correctly detects which status file was modified
+     */
+    private function testStatusFileDetection(): void
+    {
+        echo "🔍 Test 6: Status File Detection (xlsx vs csv)\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // 1. Create test case
+        $exercise = $this->helper->createTestExercise('_StatusDetect');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test6');
+
+        $users = $this->helper->createTestUsers(1);
+        $user = $users[0];
+
+        // 2. Create submission
+        $this->helper->createTestSubmission(
+            $assignment,
+            $user->getId(),
+            [['filename' => 'solution.txt', 'content' => 'Student solution']]
+        );
+
+        // 3. Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // 4. Modify ONLY status.csv (not xlsx)
+        $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', [
+            ['user_id' => $user->getId(), 'update' => 1, 'status' => 'passed']
+        ]);
+
+        // 5. Upload and check result
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        // 6. Verify that CSV was used (status should be updated)
+        $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $user->getId());
+
+        // Note: This test verifies the status was updated, indicating CSV was correctly detected
+        $csv_was_used = ($member_status === 'passed');
+
+        $this->recordResult('StatusDetection: CSV correctly detected as modified', $csv_was_used);
+
+        if ($csv_was_used) {
+            echo "✅ System correctly detected CSV as the modified status file\n";
+        } else {
+            echo "❌ Status not updated - CSV may not have been detected correctly\n";
+        }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 7: Warnings in Upload Response
+     * Verifies that warnings are returned in the JSON response
+     */
+    private function testWarningsInResponse(): void
+    {
+        echo "⚠️  Test 7: Warnings in Upload Response\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // 1. Create test case
+        $exercise = $this->helper->createTestExercise('_Warnings');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test7');
+
+        $users = $this->helper->createTestUsers(1);
+        $user = $users[0];
+
+        // 2. Create submission
+        $this->helper->createTestSubmission(
+            $assignment,
+            $user->getId(),
+            [['filename' => 'work.txt', 'content' => 'Student work']]
+        );
+
+        // 3. Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // 4. Upload WITHOUT any modifications (should trigger warning)
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $zip_path);
+
+        // 5. Check for warnings in response
+        $has_warnings = isset($upload_result['warnings']) && !empty($upload_result['warnings']);
+
+        $this->recordResult('Warnings: Unmodified upload returns warnings', $has_warnings);
+
+        if ($has_warnings) {
+            echo "✅ Warnings returned in response:\n";
+            foreach ($upload_result['warnings'] as $warning) {
+                echo "   - $warning\n";
+            }
+        } else {
+            echo "❌ No warnings in response (expected warning for unmodified files)\n";
+        }
+
+        // 6. Test warning for "no updates" (all update=0)
+        $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', [
+            ['user_id' => $user->getId(), 'update' => 0, 'status' => 'passed']
+        ]);
+
+        $upload_result2 = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        $has_no_updates_warning = false;
+        if (isset($upload_result2['warnings'])) {
+            foreach ($upload_result2['warnings'] as $warning) {
+                if (strpos($warning, 'update') !== false || strpos($warning, 'Updates') !== false) {
+                    $has_no_updates_warning = true;
+                    break;
+                }
+            }
+        }
+
+        $this->recordResult('Warnings: No-updates warning when all update=0', $has_no_updates_warning);
+
+        if ($has_no_updates_warning) {
+            echo "✅ Warning for 'no updates found' correctly returned\n";
+        } else {
+            echo "❌ Missing warning for 'no updates found'\n";
         }
 
         echo "\n";

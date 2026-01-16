@@ -218,8 +218,9 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 'zip_path' => $uploaded_file['tmp_name']
             ]);
 
-            // Processing Stats abrufen
+            // Processing Stats und Warnungen abrufen
             $stats = $upload_handler->getProcessingStats();
+            $warnings = $upload_handler->getWarnings();
 
             // Response-Daten zusammenstellen
             $response = [
@@ -240,6 +241,11 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                     $stats['renamed_count']
                 );
                 $response['message'] .= ' ' . $renamed_msg;
+            }
+
+            // Füge Warnungen hinzu, falls vorhanden
+            if (!empty($warnings)) {
+                $response['warnings'] = $warnings;
             }
 
             // Success Response

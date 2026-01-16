@@ -652,11 +652,26 @@ class ilExTeamButtonRenderer
                             return;
                         }
 
+                        // Warnungen prüfen und anzeigen
+                        var warningsHtml = "";
+                        if (responseData && responseData.warnings && responseData.warnings.length > 0) {
+                            console.log("[ExerciseStatusFile] Warnings found:", responseData.warnings);
+                            warningsHtml = "<div style=\"background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px auto; max-width: 500px; text-align: left;\">" +
+                                "<div style=\"display: flex; align-items: start;\">" +
+                                    "<span style=\"font-size: 20px; margin-right: 10px;\">⚠️</span>" +
+                                    "<div style=\"color: #856404;\">";
+                            responseData.warnings.forEach(function(warning) {
+                                warningsHtml += "<p style=\"margin: 0 0 5px 0;\">" + warning + "</p>";
+                            });
+                            warningsHtml += "</div></div></div>";
+                        }
+
                         uploadContent.innerHTML =
                             "<div style=\"text-align: center; padding: 40px;\">" +
                                 "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 20px;\">✅</div>" +
                                 "<h4 style=\"color: #28a745; margin-bottom: 15px;\">' . $txt['upload_success'] . '</h4>" +
                                 "<p style=\"color: #666;\">' . $txt['upload_success_msg'] . '</p>" +
+                                warningsHtml +
                                 "<p id=\"auto-reload-countdown\" style=\"color: #666; margin-top: 10px; font-size: 14px;\">Seite wird in <span id=\"countdown-seconds\">20</span> Sekunden neu geladen...</p>" +
                                 "<button onclick=\"window.location.reload()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
@@ -1269,11 +1284,26 @@ class ilExTeamButtonRenderer
                             return;
                         }
 
+                        // Warnungen prüfen und anzeigen
+                        var warningsHtml = "";
+                        if (responseData && responseData.warnings && responseData.warnings.length > 0) {
+                            console.log("[ExerciseStatusFile] Warnings found:", responseData.warnings);
+                            warningsHtml = "<div style=\"background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px auto; max-width: 500px; text-align: left;\">" +
+                                "<div style=\"display: flex; align-items: start;\">" +
+                                    "<span style=\"font-size: 20px; margin-right: 10px;\">⚠️</span>" +
+                                    "<div style=\"color: #856404;\">";
+                            responseData.warnings.forEach(function(warning) {
+                                warningsHtml += "<p style=\"margin: 0 0 5px 0;\">" + warning + "</p>";
+                            });
+                            warningsHtml += "</div></div></div>";
+                        }
+
                         uploadContent.innerHTML =
                             "<div style=\"text-align: center; padding: 40px;\">" +
                                 "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 20px;\">✅</div>" +
                                 "<h4 style=\"color: #28a745; margin-bottom: 15px;\">' . $txt['upload_success'] . '</h4>" +
                                 "<p style=\"color: #666;\">' . $txt['upload_success_msg'] . '</p>" +
+                                warningsHtml +
                                 "<p id=\"individual-auto-reload-countdown\" style=\"color: #666; margin-top: 10px; font-size: 14px;\">Seite wird in <span id=\"individual-countdown-seconds\">20</span> Sekunden neu geladen...</p>" +
                                 "<button onclick=\"window.location.reload()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +

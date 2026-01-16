@@ -16,6 +16,7 @@ class ilExFeedbackUploadHandler
     private array $temp_directories = [];
     private array $processing_stats = [];
     private array $renamed_files = []; // Tracking für umbenannte Dateien
+    private array $warnings = []; // Warnungen für den User (werden in Response zurückgegeben)
     
     public function __construct()
     {
@@ -79,6 +80,9 @@ class ilExFeedbackUploadHandler
             $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
             $status_files = $this->findStatusFiles($extracted_files, $checksums);
 
+            // Prüfe ob Status-Dateien unverändert sind (User-Hinweis)
+            $this->checkForUnmodifiedStatusFiles($extracted_files, $checksums);
+
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
                 try {
@@ -120,21 +124,28 @@ class ilExFeedbackUploadHandler
             $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
             $status_files = $this->findStatusFiles($extracted_files, $checksums);
 
+            // Prüfe ob Status-Dateien unverändert sind (User-Hinweis)
+            $this->checkForUnmodifiedStatusFiles($extracted_files, $checksums);
+
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
                 try {
                     $this->processStatusFiles($status_files, $assignment_id, false);
                 } catch (Exception $e) {
-                    // Prüfe ob es ein kritischer Fehler ist (z.B. ungültiger Status-Wert)
                     $error_msg = $e->getMessage();
+
+                    // Kritische Fehler (ungültiger Status-Wert) -> Upload abbrechen
                     if (strpos($error_msg, 'Invalid status') !== false ||
                         strpos($error_msg, 'Status file error') !== false) {
-                        // Kritischer Fehler - Upload abbrechen
                         $this->logger->error("Critical error in status file: " . $error_msg);
                         throw new Exception("Status-File Fehler: " . $error_msg);
                     }
-                    // Nur bei anderen Fehlern (z.B. leere Files) fortfahren
-                    $this->logger->info("Status file processing skipped: " . $error_msg);
+
+                    // Keine Updates gefunden -> User-Warnung
+                    if (strpos($error_msg, 'Keine Updates') !== false ||
+                        strpos($error_msg, 'Keine Status-Updates') !== false) {
+                        $this->showUserWarning("Keine Status-Updates gefunden. Haben Sie die 'update'-Spalte auf 1 gesetzt für die Zeilen, die aktualisiert werden sollen?");
+                    }
                 }
             }
 
@@ -386,8 +397,18 @@ class ilExFeedbackUploadHandler
 
         // Keine Status-Files gefunden
         if (!$xlsx_file && !$csv_file) {
+            $this->logger->info("findStatusFiles: No status.xlsx or status.csv found in ZIP");
             return [];
         }
+
+        // Prüfe ob Checksums für Status-Dateien vorhanden sind
+        $has_xlsx_checksum = isset($checksums['status.xlsx']);
+        $has_csv_checksum = isset($checksums['status.csv']);
+
+        $this->logger->info("findStatusFiles: Found xlsx=" . ($xlsx_file ? 'yes' : 'no') .
+            ", csv=" . ($csv_file ? 'yes' : 'no') .
+            ", xlsx_checksum=" . ($has_xlsx_checksum ? 'yes' : 'no') .
+            ", csv_checksum=" . ($has_csv_checksum ? 'yes' : 'no'));
 
         // Prüfe welche Datei(en) geändert wurden
         $xlsx_modified = false;
@@ -401,6 +422,9 @@ class ilExFeedbackUploadHandler
             $csv_modified = $this->isFileModified($csv_file, $checksums);
         }
 
+        $this->logger->info("findStatusFiles: xlsx_modified=" . ($xlsx_modified ? 'true' : 'false') .
+            ", csv_modified=" . ($csv_modified ? 'true' : 'false'));
+
         // Entscheidungslogik
         if ($xlsx_modified && $csv_modified) {
             // BEIDE geändert -> xlsx verwenden aber Warnung
@@ -408,26 +432,79 @@ class ilExFeedbackUploadHandler
                 "Both status.xlsx and status.csv were modified. Using status.xlsx. " .
                 "Please modify only ONE status file per upload."
             );
+            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (both modified, xlsx preferred)");
             return [$xlsx_file['extracted_path']];
 
         } elseif ($xlsx_modified) {
             // Nur xlsx geändert
+            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (only xlsx modified)");
             return [$xlsx_file['extracted_path']];
 
         } elseif ($csv_modified) {
             // Nur csv geändert
+            $this->logger->info("findStatusFiles: DECISION -> using status.csv (only csv modified)");
             return [$csv_file['extracted_path']];
 
         } else {
-            // Keine Änderungen oder keine Checksums vorhanden
+            // Keine Änderungen erkannt - Fallback
+            $this->logger->info("findStatusFiles: No modifications detected, using fallback");
             if ($xlsx_file) {
+                $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (fallback)");
                 return [$xlsx_file['extracted_path']];
             } elseif ($csv_file) {
+                $this->logger->info("findStatusFiles: DECISION -> using status.csv (fallback)");
                 return [$csv_file['extracted_path']];
             }
         }
 
         return [];
+    }
+
+    /**
+     * Prüft ob beide Status-Dateien unverändert sind und zeigt Warnung
+     */
+    private function checkForUnmodifiedStatusFiles(array $extracted_files, array $checksums): void
+    {
+        // Nur prüfen wenn Checksums vorhanden sind
+        if (empty($checksums) || !isset($checksums['status.xlsx']) || !isset($checksums['status.csv'])) {
+            return;
+        }
+
+        $xlsx_file = null;
+        $csv_file = null;
+
+        foreach ($extracted_files as $file) {
+            $basename = basename($file['original_name']);
+            if ($basename === 'status.xlsx') {
+                $xlsx_file = $file;
+            } elseif ($basename === 'status.csv') {
+                $csv_file = $file;
+            }
+        }
+
+        // Prüfe ob BEIDE unverändert sind
+        $xlsx_unchanged = $xlsx_file && !$this->isFileModified($xlsx_file, $checksums);
+        $csv_unchanged = $csv_file && !$this->isFileModified($csv_file, $checksums);
+
+        if ($xlsx_unchanged && $csv_unchanged) {
+            $this->showUserWarning("Hinweis: Weder status.xlsx noch status.csv wurden geändert. Wenn Sie Status-Updates vornehmen möchten, bearbeiten Sie bitte eine der beiden Dateien.");
+        }
+    }
+
+    /**
+     * Speichert eine Warnung für den User (wird in Response zurückgegeben)
+     */
+    private function showUserWarning(string $message): void
+    {
+        $this->warnings[] = $message;
+    }
+
+    /**
+     * Gibt alle gesammelten Warnungen zurück
+     */
+    public function getWarnings(): array
+    {
+        return $this->warnings;
     }
 
     /**
@@ -443,15 +520,40 @@ class ilExFeedbackUploadHandler
             return false;
         }
 
-        $current_checksum = hash_file('sha256', $file['extracted_path']);
         $original_name = $file['original_name'];
 
         // Checksums sind nach original_name indiziert
         if (isset($checksums[$original_name])) {
-            return $current_checksum !== $checksums[$original_name];
+            $checksum_data = $checksums[$original_name];
+
+            // Neues Format: Array mit 'sha256' und/oder 'md5'
+            if (is_array($checksum_data)) {
+                // Bevorzuge SHA256, fallback auf MD5
+                if (isset($checksum_data['sha256'])) {
+                    $current_hash = hash_file('sha256', $file['extracted_path']);
+                    $stored_hash = $checksum_data['sha256'];
+                    $is_modified = ($current_hash !== $stored_hash);
+                    $this->logger->debug("isFileModified('$original_name'): SHA256 compare - " . ($is_modified ? 'MODIFIED' : 'unchanged'));
+                    return $is_modified;
+                } elseif (isset($checksum_data['md5'])) {
+                    $current_hash = md5_file($file['extracted_path']);
+                    $stored_hash = $checksum_data['md5'];
+                    $is_modified = ($current_hash !== $stored_hash);
+                    $this->logger->debug("isFileModified('$original_name'): MD5 compare - " . ($is_modified ? 'MODIFIED' : 'unchanged'));
+                    return $is_modified;
+                }
+            }
+            // Altes Format: direkter Hash-String (für Rückwärtskompatibilität)
+            elseif (is_string($checksum_data)) {
+                $current_hash = hash_file('sha256', $file['extracted_path']);
+                $is_modified = ($current_hash !== $checksum_data);
+                $this->logger->debug("isFileModified('$original_name'): Legacy compare - " . ($is_modified ? 'MODIFIED' : 'unchanged'));
+                return $is_modified;
+            }
         }
 
         // Kein Checksum gefunden -> als geändert betrachten
+        $this->logger->debug("isFileModified('$original_name'): No checksum found -> treating as MODIFIED");
         return true;
     }
 
@@ -473,8 +575,14 @@ class ilExFeedbackUploadHandler
 
                     if (is_array($checksums)) {
                         $this->logger->info("Loaded " . count($checksums) . " checksums from checksums.json");
+                        // Debug: Log the keys to see what's in the checksums
+                        $this->logger->info("Checksum keys: " . implode(', ', array_keys($checksums)));
                         return $checksums;
+                    } else {
+                        $this->logger->warning("checksums.json could not be parsed as array. JSON error: " . json_last_error_msg());
                     }
+                } else {
+                    $this->logger->warning("checksums.json file not found at path: " . $checksums_path);
                 }
             }
         }
@@ -504,14 +612,13 @@ class ilExFeedbackUploadHandler
             
             foreach ($status_files as $file_path) {
                 if (!file_exists($file_path)) continue;
-                
+
                 try {
                     $status_file = new ilPluginExAssignmentStatusFile();
                     $status_file->init($assignment);
                     $status_file->allowPlagiarismUpdate(true);
-                    
                     $status_file->loadFromFile($file_path);
-                    
+
                     if ($status_file->isLoadFromFileSuccess()) {
                         if ($status_file->hasUpdates()) {
                             $updates = $status_file->getUpdates();
@@ -558,9 +665,8 @@ class ilExFeedbackUploadHandler
                             $this->processing_stats['timestamp'] = date('Y-m-d H:i:s');
                             $updates_applied = true;
                             
-                            $this->logger->debug("Applied $updates_count status updates from " . basename($file_path));
                             break;
-                            
+
                         } else {
                             $load_errors[] = "Keine Updates in " . basename($file_path) . " gefunden.";
                         }
@@ -585,11 +691,10 @@ class ilExFeedbackUploadHandler
                 }
                 throw new Exception($error_msg);
             }
-            
+
             $this->clearAssignmentCaches($assignment_id);
-            
+
         } catch (Exception $e) {
-            $this->logger->error("Error in status file processing: " . $e->getMessage());
             throw $e;
         }
     }
