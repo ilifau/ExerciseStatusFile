@@ -37,6 +37,7 @@ class SmokeTests
         $this->testChecksumFeature();
         $this->testSystemFileFiltering();
         $this->testPerformanceOptimizations();
+        $this->testBaseClassInheritance();
 
         echo "\n";
         echo "───────────────────────────────────────────────────────\n";
@@ -88,8 +89,12 @@ class SmokeTests
             'README.md',
             'classes/class.ilExerciseStatusFileUIHookGUI.php',
             'classes/Processing/class.ilExFeedbackUploadHandler.php',
-            'classes/Processing/class.ilExMultiFeedbackDownloadHandler.php',
+            'classes/Processing/class.ilExMultiFeedbackDownloadHandlerBase.php',
+            'classes/Processing/class.ilExTeamMultiFeedbackDownloadHandler.php',
             'classes/Processing/class.ilExIndividualMultiFeedbackDownloadHandler.php',
+            'classes/Processing/class.ilExDataProviderBase.php',
+            'classes/Processing/class.ilExTeamDataProvider.php',
+            'classes/Processing/class.ilExUserDataProvider.php',
         ];
 
         foreach ($required_files as $file) {
@@ -406,16 +411,22 @@ class SmokeTests
         echo "───────────────────────────────────────────────────────\n";
 
         $user_provider = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExUserDataProvider.php');
+        $data_provider_base = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExDataProviderBase.php');
 
         $this->test(
-            "Batch user data loading method exists",
-            fn() => strpos($user_provider, 'function getUserDataBatch') !== false
+            "DataProvider Base class exists",
+            fn() => strpos($data_provider_base, 'abstract class ilExDataProviderBase') !== false
+        );
+
+        $this->test(
+            "Batch user data loading in Base class",
+            fn() => strpos($data_provider_base, 'function getUserDataBatch') !== false
         );
 
         $this->test(
             "Batch user data uses single query with IN clause",
-            fn() => strpos($user_provider, '$this->db->in(\'usr_id\', $user_ids') !== false &&
-                    strpos($user_provider, 'getUserDataBatch') !== false
+            fn() => strpos($data_provider_base, '$this->db->in(\'usr_id\', $user_ids') !== false &&
+                    strpos($data_provider_base, 'getUserDataBatch') !== false
         );
 
         $this->test(
@@ -431,14 +442,14 @@ class SmokeTests
         );
 
         $this->test(
-            "Batch user status loading method exists",
-            fn() => strpos($user_provider, 'function getUserStatusesBatch') !== false
+            "Batch status loading in Base class",
+            fn() => strpos($data_provider_base, 'function getStatusesBatch') !== false
         );
 
         $this->test(
-            "Batch user status uses single query",
-            fn() => strpos($user_provider, 'FROM exc_mem_ass_status') !== false &&
-                    strpos($user_provider, 'getUserStatusesBatch') !== false
+            "Batch status uses single query",
+            fn() => strpos($data_provider_base, 'FROM exc_mem_ass_status') !== false &&
+                    strpos($data_provider_base, 'getStatusesBatch') !== false
         );
 
         $this->test(
@@ -450,19 +461,97 @@ class SmokeTests
             "Main method uses batch loading (N+1 fix)",
             fn() => strpos($user_provider, '$users_data_map = $this->getUserDataBatch') !== false &&
                     strpos($user_provider, '$submissions_map = $this->checkSubmissionsExistBatch') !== false &&
-                    strpos($user_provider, '$statuses_map = $this->getUserStatusesBatch') !== false
+                    strpos($user_provider, '$statuses_map = $this->getStatusesBatch') !== false
         );
 
         $this->test(
-            "Gzip compression for AJAX responses",
-            fn() => strpos($user_provider, 'ob_gzhandler') !== false &&
-                    strpos($user_provider, 'generateJSONResponse') !== false
+            "Gzip compression helper in Base class",
+            fn() => strpos($data_provider_base, 'startGzipCompression') !== false &&
+                    strpos($data_provider_base, 'ob_gzhandler') !== false
         );
 
         $this->test(
-            "JSON response includes proper headers",
-            fn() => strpos($user_provider, 'Content-Type: application/json') !== false &&
-                    strpos($user_provider, 'Cache-Control: no-cache') !== false
+            "JSON headers helper in Base class",
+            fn() => strpos($data_provider_base, 'sendJSONHeaders') !== false &&
+                    strpos($data_provider_base, 'Content-Type: application/json') !== false
+        );
+    }
+
+    private function testBaseClassInheritance(): void
+    {
+        echo "\n🏛️  Base Class Inheritance Tests\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // Download Handlers
+        $download_base = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExMultiFeedbackDownloadHandlerBase.php');
+        $team_download = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExTeamMultiFeedbackDownloadHandler.php');
+        $individual_download = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExIndividualMultiFeedbackDownloadHandler.php');
+
+        $this->test(
+            "Download Handler Base is abstract",
+            fn() => strpos($download_base, 'abstract class ilExMultiFeedbackDownloadHandlerBase') !== false
+        );
+
+        $this->test(
+            "Team Download Handler extends Base",
+            fn() => strpos($team_download, 'extends ilExMultiFeedbackDownloadHandlerBase') !== false
+        );
+
+        $this->test(
+            "Individual Download Handler extends Base",
+            fn() => strpos($individual_download, 'extends ilExMultiFeedbackDownloadHandlerBase') !== false
+        );
+
+        // Data Providers
+        $data_base = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExDataProviderBase.php');
+        $team_data = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExTeamDataProvider.php');
+        $user_data = file_get_contents(PLUGIN_DIR . '/classes/Processing/class.ilExUserDataProvider.php');
+
+        $this->test(
+            "DataProvider Base is abstract",
+            fn() => strpos($data_base, 'abstract class ilExDataProviderBase') !== false
+        );
+
+        $this->test(
+            "Team DataProvider extends Base",
+            fn() => strpos($team_data, 'extends ilExDataProviderBase') !== false
+        );
+
+        $this->test(
+            "User DataProvider extends Base",
+            fn() => strpos($user_data, 'extends ilExDataProviderBase') !== false
+        );
+
+        // Abstract methods
+        $this->test(
+            "Download Base has getEntityType abstract method",
+            fn() => strpos($download_base, 'abstract protected function getEntityType()') !== false
+        );
+
+        $this->test(
+            "DataProvider Base has getEntityType abstract method",
+            fn() => strpos($data_base, 'abstract protected function getEntityType()') !== false
+        );
+
+        // Shared methods in Base classes
+        $this->test(
+            "Download Base has shared addStatusFiles method",
+            fn() => strpos($download_base, 'protected function addStatusFiles') !== false
+        );
+
+        $this->test(
+            "Download Base has shared sendZIPDownload method",
+            fn() => strpos($download_base, 'protected function sendZIPDownload') !== false
+        );
+
+        $this->test(
+            "DataProvider Base has shared translateStatus method",
+            fn() => strpos($data_base, 'protected function translateStatus') !== false
+        );
+
+        $this->test(
+            "DataProvider Base has shared getDefaultStatus method",
+            fn() => strpos($data_base, 'protected function getDefaultStatus') !== false
         );
     }
 

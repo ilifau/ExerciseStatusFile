@@ -7,7 +7,7 @@ require_once __DIR__ . '/UI/class.ilExTeamButtonRenderer.php';
 require_once __DIR__ . '/Processing/class.ilExFeedbackDownloadHandler.php';
 require_once __DIR__ . '/Processing/class.ilExFeedbackUploadHandler.php';
 require_once __DIR__ . '/Processing/class.ilExTeamDataProvider.php';
-require_once __DIR__ . '/Processing/class.ilExMultiFeedbackDownloadHandler.php';
+require_once __DIR__ . '/Processing/class.ilExTeamMultiFeedbackDownloadHandler.php';
 require_once __DIR__ . '/Processing/class.ilExUserDataProvider.php';
 require_once __DIR__ . '/Processing/class.ilExIndividualMultiFeedbackDownloadHandler.php';
 
@@ -294,7 +294,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 throw new Exception("Keine gültigen Team-IDs");
             }
 
-            $multi_feedback_handler = new ilExMultiFeedbackDownloadHandler();
+            $multi_feedback_handler = new ilExTeamMultiFeedbackDownloadHandler();
             $multi_feedback_handler->generateMultiFeedbackDownload((int)$assignment_id, $team_ids);
 
         } catch (Exception $e) {
@@ -453,7 +453,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 'download_handler' => class_exists('ilExFeedbackDownloadHandler'),
                 'upload_handler' => class_exists('ilExFeedbackUploadHandler'),
                 'team_data_provider' => class_exists('ilExTeamDataProvider'),
-                'multi_feedback_download_handler' => class_exists('ilExMultiFeedbackDownloadHandler')
+                'multi_feedback_download_handler' => class_exists('ilExTeamMultiFeedbackDownloadHandler')
             ]
         ];
         

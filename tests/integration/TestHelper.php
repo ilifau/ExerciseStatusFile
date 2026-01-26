@@ -249,7 +249,7 @@ class IntegrationTestHelper
         // For tests, we need to manually create a ZIP with the correct structure
         // The actual download handler uses output buffering and sends headers
 
-        require_once __DIR__ . '/../../classes/Processing/class.ilExMultiFeedbackDownloadHandler.php';
+        require_once __DIR__ . '/../../classes/Processing/class.ilExTeamMultiFeedbackDownloadHandler.php';
 
         $assignment = new ilExAssignment($assignment_id);
         $is_team = $assignment->getAssignmentType()->usesTeams();
