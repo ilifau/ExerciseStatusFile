@@ -551,15 +551,9 @@ class ilExTeamButtonRenderer
                         };
                         
                         xhr.onload = function() {
-                            console.log("[ExerciseStatusFile] Upload response received - Status:", xhr.status);
-                            console.log("[ExerciseStatusFile] Response text:", xhr.responseText);
-
                             if (xhr.status === 200) {
                                 window.ExerciseStatusFilePlugin.handleUploadSuccess(xhr.responseText);
                             } else {
-                                console.error("[ExerciseStatusFile] Upload failed with HTTP status:", xhr.status);
-
-                                // Parse error response
                                 var errorMessage = "' . $txt['error_http'] . ' " + xhr.status;
                                 try {
                                     var errorData = JSON.parse(xhr.responseText);
@@ -568,10 +562,7 @@ class ilExTeamButtonRenderer
                                     } else if (errorData.error_details) {
                                         errorMessage = errorData.error_details;
                                     }
-                                    console.error("[ExerciseStatusFile] Parsed error data:", errorData);
                                 } catch(e) {
-                                    console.error("[ExerciseStatusFile] Failed to parse error response:", e);
-                                    // Wenn JSON-Parsing fehlschlägt, verwende responseText direkt
                                     if (xhr.responseText) {
                                         errorMessage = xhr.responseText;
                                     }
@@ -616,46 +607,30 @@ class ilExTeamButtonRenderer
                     
                     handleUploadSuccess: function(responseText) {
                         var uploadContent = document.getElementById("upload-content");
-
-                        console.log("[ExerciseStatusFile] handleUploadSuccess called");
-
-                        // DEBUG: Parse und prüfe Response
                         var responseData = null;
                         var hasError = false;
                         var errorMsg = "";
 
                         try {
                             responseData = JSON.parse(responseText);
-                            console.log("[ExerciseStatusFile] Parsed response data:", responseData);
-
                             if (responseData.error || responseData.success === false) {
                                 hasError = true;
                                 errorMsg = responseData.message || responseData.error_details || "Unbekannter Fehler";
-                                console.error("[ExerciseStatusFile] Error detected in response:", errorMsg);
-                            } else {
-                                console.log("[ExerciseStatusFile] Upload successful!");
                             }
                         } catch(e) {
-                            console.warn("[ExerciseStatusFile] Failed to parse response as JSON:", e);
-                            // Kein JSON - behandle als Text
                             if (responseText.toLowerCase().includes("error") || responseText.toLowerCase().includes("exception")) {
                                 hasError = true;
                                 errorMsg = responseText;
-                                console.error("[ExerciseStatusFile] Error keyword detected in response text");
                             }
                         }
 
-                        // Wenn Fehler erkannt, zeige Error statt Success
                         if (hasError) {
-                            console.error("[ExerciseStatusFile] Redirecting to error handler with message:", errorMsg);
                             window.ExerciseStatusFilePlugin.handleUploadError(errorMsg);
                             return;
                         }
 
-                        // Warnungen prüfen und anzeigen
                         var warningsHtml = "";
                         if (responseData && responseData.warnings && responseData.warnings.length > 0) {
-                            console.log("[ExerciseStatusFile] Warnings found:", responseData.warnings);
                             warningsHtml = "<div style=\"background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px auto; max-width: 500px; text-align: left;\">" +
                                 "<div style=\"display: flex; align-items: start;\">" +
                                     "<span style=\"font-size: 20px; margin-right: 10px;\">⚠️</span>" +
@@ -696,10 +671,6 @@ class ilExTeamButtonRenderer
 
                     handleUploadError: function(error) {
                         var uploadContent = document.getElementById("upload-content");
-
-                        console.error("[ExerciseStatusFile] handleUploadError called with error:", error);
-
-                        // HTML-escape und Zeilenumbrüche konvertieren
                         var escapedError = error
                             .replace(/&/g, "&amp;")
                             .replace(/</g, "&lt;")
@@ -723,11 +694,7 @@ class ilExTeamButtonRenderer
                     },
 
                     resetUploadTab: function() {
-                        console.log("[ExerciseStatusFile] Resetting upload tab");
-
-                        // Assignment ID speichern BEVOR wir das HTML zurücksetzen
                         var currentAssId = window.ExerciseStatusFilePlugin.currentAssignmentId;
-                        console.log("[ExerciseStatusFile] Using assignment ID:", currentAssId);
 
                         var uploadContent = document.getElementById("upload-content");
 
@@ -1183,15 +1150,9 @@ class ilExTeamButtonRenderer
                         };
                         
                         xhr.onload = function() {
-                            console.log("[ExerciseStatusFile] Individual upload response received - Status:", xhr.status);
-                            console.log("[ExerciseStatusFile] Response text:", xhr.responseText);
-
                             if (xhr.status === 200) {
                                 window.ExerciseStatusFilePlugin.handleIndividualUploadSuccess(xhr.responseText);
                             } else {
-                                console.error("[ExerciseStatusFile] Individual upload failed with HTTP status:", xhr.status);
-
-                                // Parse error response
                                 var errorMessage = "' . $txt['error_http'] . ' " + xhr.status;
                                 try {
                                     var errorData = JSON.parse(xhr.responseText);
@@ -1200,10 +1161,7 @@ class ilExTeamButtonRenderer
                                     } else if (errorData.error_details) {
                                         errorMessage = errorData.error_details;
                                     }
-                                    console.error("[ExerciseStatusFile] Parsed error data:", errorData);
                                 } catch(e) {
-                                    console.error("[ExerciseStatusFile] Failed to parse error response:", e);
-                                    // Wenn JSON-Parsing fehlschlägt, verwende responseText direkt
                                     if (xhr.responseText) {
                                         errorMessage = xhr.responseText;
                                     }
@@ -1248,46 +1206,30 @@ class ilExTeamButtonRenderer
                     
     handleIndividualUploadSuccess: function(responseText) {
                         var uploadContent = document.getElementById("individual-upload-content");
-
-                        console.log("[ExerciseStatusFile] handleIndividualUploadSuccess called");
-
-                        // DEBUG: Parse und prüfe Response
                         var responseData = null;
                         var hasError = false;
                         var errorMsg = "";
 
                         try {
                             responseData = JSON.parse(responseText);
-                            console.log("[ExerciseStatusFile] Parsed response data:", responseData);
-
                             if (responseData.error || responseData.success === false) {
                                 hasError = true;
                                 errorMsg = responseData.message || responseData.error_details || "Unbekannter Fehler";
-                                console.error("[ExerciseStatusFile] Error detected in response:", errorMsg);
-                            } else {
-                                console.log("[ExerciseStatusFile] Individual upload successful!");
                             }
                         } catch(e) {
-                            console.warn("[ExerciseStatusFile] Failed to parse response as JSON:", e);
-                            // Kein JSON - behandle als Text
                             if (responseText.toLowerCase().includes("error") || responseText.toLowerCase().includes("exception")) {
                                 hasError = true;
                                 errorMsg = responseText;
-                                console.error("[ExerciseStatusFile] Error keyword detected in response text");
                             }
                         }
 
-                        // Wenn Fehler erkannt, zeige Error statt Success
                         if (hasError) {
-                            console.error("[ExerciseStatusFile] Redirecting to individual error handler with message:", errorMsg);
                             window.ExerciseStatusFilePlugin.handleIndividualUploadError(errorMsg);
                             return;
                         }
 
-                        // Warnungen prüfen und anzeigen
                         var warningsHtml = "";
                         if (responseData && responseData.warnings && responseData.warnings.length > 0) {
-                            console.log("[ExerciseStatusFile] Warnings found:", responseData.warnings);
                             warningsHtml = "<div style=\"background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px auto; max-width: 500px; text-align: left;\">" +
                                 "<div style=\"display: flex; align-items: start;\">" +
                                     "<span style=\"font-size: 20px; margin-right: 10px;\">⚠️</span>" +
@@ -1328,10 +1270,6 @@ class ilExTeamButtonRenderer
 
                     handleIndividualUploadError: function(error) {
                         var uploadContent = document.getElementById("individual-upload-content");
-
-                        console.error("[ExerciseStatusFile] handleIndividualUploadError called with error:", error);
-
-                        // HTML-escape und Zeilenumbrüche konvertieren
                         var escapedError = error
                             .replace(/&/g, "&amp;")
                             .replace(/</g, "&lt;")
@@ -1355,11 +1293,7 @@ class ilExTeamButtonRenderer
                     },
 
                     resetIndividualUploadTab: function() {
-                        console.log("[ExerciseStatusFile] Resetting individual upload tab");
-
-                        // Assignment ID speichern BEVOR wir das HTML zurücksetzen
                         var currentAssId = window.ExerciseStatusFilePlugin.currentAssignmentId;
-                        console.log("[ExerciseStatusFile] Using assignment ID:", currentAssId);
 
                         var uploadContent = document.getElementById("individual-upload-content");
 
