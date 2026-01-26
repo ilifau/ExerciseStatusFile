@@ -30,6 +30,7 @@ class IntegrationTestRunner
             $this->runCSVStatusFileTests();
             $this->runTeamNotificationTests();
             $this->runNegativeTests();
+            $this->runLargeScaleTest();
 
             $duration = round(microtime(true) - $start_time, 2);
 
@@ -571,6 +572,239 @@ class IntegrationTestRunner
         } catch (Exception $e) {
             echo "❌ FEHLER: " . $e->getMessage() . "\n\n";
             $this->recordResult('Team Notification: Complete workflow', false);
+        }
+    }
+
+    /**
+     * Test 7: Large-Scale Upload (127 Users)
+     * Tests the system with a large number of users
+     */
+    public function runLargeScaleTest(): void
+    {
+        echo "📊 Test 7: Large-Scale Upload (127 Users)\n";
+        echo "───────────────────────────────────────────────────────\n\n";
+
+        $user_count = 127;
+        $start_time = microtime(true);
+
+        try {
+            // 1. Create exercise and assignment
+            echo "→ Erstelle Übung und Aufgabe...\n";
+            $exercise = $this->helper->createTestExercise('_LargeScale');
+            $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test7_127Users');
+            echo "✅ Übung erstellt (ID: {$assignment->getId()})\n";
+
+            // 2. Create 127 test users
+            echo "→ Erstelle $user_count Test-User...\n";
+            $users = $this->helper->createTestUsers($user_count);
+            echo "✅ $user_count User erstellt\n";
+
+            // 3. Create submissions for all users
+            echo "→ Erstelle Abgaben für alle User...\n";
+            $submission_count = 0;
+            foreach ($users as $user) {
+                $this->helper->createTestSubmission(
+                    $assignment,
+                    $user->getId(),
+                    [
+                        [
+                            'filename' => 'submission.txt',
+                            'content' => "Abgabe von {$user->getLogin()}\nMatrikelnummer: " . rand(1000000, 9999999)
+                        ]
+                    ]
+                );
+                $submission_count++;
+
+                // Progress indicator every 25 users
+                if ($submission_count % 25 === 0) {
+                    echo "   ... $submission_count/$user_count Abgaben erstellt\n";
+                }
+            }
+            echo "✅ Alle $submission_count Abgaben erstellt\n";
+
+            // DEBUG: Verify all users are members
+            $exc_members = ilExerciseMembers::_getMembers($exercise->getId());
+            echo "   🔍 Exercise hat " . count($exc_members) . " Members (erwartet: $user_count)\n";
+            if (count($exc_members) !== $user_count) {
+                echo "   ⚠️  Fehlende Member-IDs:\n";
+                foreach ($users as $u) {
+                    if (!in_array($u->getId(), $exc_members)) {
+                        echo "      - User-ID " . $u->getId() . "\n";
+                    }
+                }
+            }
+
+            // 4. Download multi-feedback ZIP
+            echo "→ Lade Multi-Feedback ZIP herunter...\n";
+            $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+            if (!file_exists($zip_path)) {
+                throw new Exception("ZIP konnte nicht erstellt werden");
+            }
+
+            // DEBUG: Show ZIP contents
+            $zip = new ZipArchive();
+            if ($zip->open($zip_path) === true) {
+                echo "   📦 Original-ZIP enthält " . $zip->numFiles . " Dateien:\n";
+                $sample_count = min(5, $zip->numFiles);
+                for ($i = 0; $i < $sample_count; $i++) {
+                    echo "      - " . $zip->getNameIndex($i) . "\n";
+                }
+                if ($zip->numFiles > 5) {
+                    echo "      ... und " . ($zip->numFiles - 5) . " weitere\n";
+                }
+                $zip->close();
+            }
+
+            echo "✅ ZIP heruntergeladen\n";
+
+            // 5. Modify status.csv - set every 2nd user to update=1, status=passed
+            echo "→ Modifiziere status.csv (jeder 2. User bekommt 'passed')...\n";
+            $updates = [];
+            $users_to_update = [];
+            for ($i = 0; $i < count($users); $i++) {
+                if ($i % 2 === 0) { // Every 2nd user (0, 2, 4, ...)
+                    $updates[] = [
+                        'user_id' => $users[$i]->getId(),
+                        'update' => 1,
+                        'status' => 'passed'
+                    ];
+                    $users_to_update[] = $users[$i]->getId();
+                }
+            }
+
+            // DEBUG: Show last user info before modification
+            $last_user = $users[count($users) - 1];
+            $last_user_index = count($users) - 1;
+            echo "   🔍 Letzter User: ID=" . $last_user->getId() . ", Index=$last_user_index, in_update_list=" .
+                 (in_array($last_user->getId(), $users_to_update) ? 'ja' : 'nein') . "\n";
+
+            $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', $updates);
+
+            if (!file_exists($modified_zip)) {
+                throw new Exception("Modifizierte ZIP konnte nicht erstellt werden");
+            }
+
+            // DEBUG: Show CSV debug info from helper
+            $csv_debug = $this->helper->getLastCsvDebug();
+            if (!empty($csv_debug)) {
+                echo "   🔍 CSV nach Schreiben (vor ZIP-Erstellung):\n";
+                echo "      - Datenzeilen: " . ($csv_debug['written_count'] ?? 'N/A') . "\n";
+                echo "      - Letzter User: " . ($csv_debug['last_user_id'] ?? 'N/A') . "\n";
+                if (!empty($csv_debug['last_3_lines'])) {
+                    echo "      - Letzte 3 Zeilen:\n";
+                    foreach ($csv_debug['last_3_lines'] as $line_info) {
+                        echo "         update=" . $line_info['update'] . ", usr_id=" . $line_info['usr_id'] . "\n";
+                    }
+                }
+            }
+
+            // DEBUG: Check if last user is in modified CSV
+            $zip = new ZipArchive();
+            if ($zip->open($modified_zip) === true) {
+                $csv_content = $zip->getFromName('status.csv');
+                $lines = explode("\n", trim($csv_content));
+                $csv_user_count = count($lines) - 1; // minus header
+                echo "   🔍 CSV enthält $csv_user_count Datenzeilen (erwartet: $user_count)\n";
+
+                // Show last 3 lines of CSV
+                echo "   🔍 Letzte 3 CSV-Zeilen:\n";
+                $last_lines = array_slice($lines, -3);
+                foreach ($last_lines as $line) {
+                    $parts = explode(';', $line);
+                    $update_val = $parts[0] ?? '?';
+                    $usr_id = $parts[1] ?? '?';
+                    echo "      update=$update_val, usr_id=$usr_id\n";
+                }
+                $zip->close();
+            }
+
+            // DEBUG: Show modified ZIP contents
+            $zip = new ZipArchive();
+            if ($zip->open($modified_zip) === true) {
+                echo "   📦 Modifizierte ZIP enthält " . $zip->numFiles . " Dateien:\n";
+                $sample_count = min(5, $zip->numFiles);
+                for ($i = 0; $i < $sample_count; $i++) {
+                    echo "      - " . $zip->getNameIndex($i) . "\n";
+                }
+                if ($zip->numFiles > 5) {
+                    echo "      ... und " . ($zip->numFiles - 5) . " weitere\n";
+                }
+                $zip->close();
+            }
+
+            echo "✅ " . count($updates) . " User für Update markiert\n";
+
+            // 6. Upload modified ZIP
+            echo "→ Lade modifizierte ZIP hoch...\n";
+            $upload_start = microtime(true);
+            $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+            $upload_duration = round(microtime(true) - $upload_start, 2);
+
+            if (!($upload_result['success'] ?? false)) {
+                echo "   ⚠️  Upload-Fehler: " . ($upload_result['error'] ?? 'Unbekannt') . "\n";
+            }
+            echo "✅ Upload verarbeitet in {$upload_duration}s\n";
+
+            // 7. Verify status updates were applied
+            echo "→ Verifiziere Status-Updates...\n";
+            $verified_count = 0;
+            $failed_users = [];
+
+            foreach ($users_to_update as $user_id) {
+                $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $user_id);
+                if ($member_status === 'passed') {
+                    $verified_count++;
+                } else {
+                    $failed_users[] = $user_id;
+                }
+            }
+
+            $expected_updates = count($users_to_update);
+            $success_rate = round(($verified_count / $expected_updates) * 100, 1);
+
+            echo "✅ Verifiziert: $verified_count/$expected_updates User haben Status 'passed' ($success_rate%)\n";
+
+            if (!empty($failed_users)) {
+                echo "   ⚠️  Fehlgeschlagen für " . count($failed_users) . " User:\n";
+                foreach ($failed_users as $failed_user_id) {
+                    // Find the index of this user in the original users array
+                    $user_index = -1;
+                    foreach ($users as $idx => $u) {
+                        if ($u->getId() == $failed_user_id) {
+                            $user_index = $idx;
+                            break;
+                        }
+                    }
+                    $actual_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $failed_user_id);
+                    echo "      - User-ID $failed_user_id (Index: $user_index, Status: " . ($actual_status ?: 'null') . ")\n";
+                }
+            }
+
+            // 8. Check for warnings
+            if (!empty($upload_result['warnings'])) {
+                echo "   ⚠️  Warnungen: " . implode('; ', $upload_result['warnings']) . "\n";
+            }
+
+            // Record results - require 100% success rate
+            $this->recordResult('LargeScale: Download ZIP with 127 users', file_exists($zip_path));
+            $this->recordResult('LargeScale: Modify status.csv', file_exists($modified_zip));
+            $this->recordResult('LargeScale: Upload processed', $upload_result['success'] ?? false);
+            $this->recordResult('LargeScale: Status updates verified (' . $success_rate . '%)', $success_rate >= 100.0);
+
+            $total_duration = round(microtime(true) - $start_time, 2);
+            echo "\n📈 Statistik:\n";
+            echo "   • User erstellt: $user_count\n";
+            echo "   • Abgaben erstellt: $submission_count\n";
+            echo "   • Status-Updates: $expected_updates\n";
+            echo "   • Erfolgreich aktualisiert: $verified_count\n";
+            echo "   • Gesamtdauer: {$total_duration}s\n";
+
+            echo "\n✅ Test abgeschlossen: Large-Scale Test erfolgreich\n\n";
+
+        } catch (Exception $e) {
+            echo "❌ FEHLER: " . $e->getMessage() . "\n\n";
+            $this->recordResult('LargeScale: Complete workflow', false);
         }
     }
 

@@ -170,11 +170,11 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             }
             
             $this->members = [];
-            
+
             foreach ($member_ids as $user_id) {
                 $user_data = $users[$user_id] ?? null;
                 $status_data = $statuses[$user_id] ?? null;
-                
+
                 if (!$user_data) {
                     continue;
                 }
@@ -207,7 +207,7 @@ class ilPluginExAssignmentStatusFile extends ilExcel
                     'plag_comment' => ''
                 ];
             }
-            
+
         } catch (Exception $e) {
             $this->members = [];
         }
@@ -223,25 +223,55 @@ class ilPluginExAssignmentStatusFile extends ilExcel
 
         $index = array_flip($this->member_titles);
 
+        // Filter empty rows before processing
+        // PhpSpreadsheet may include empty rows at the end when CSV ends with newline
+        $sheet = array_filter($sheet, function($row) {
+            foreach ($row as $value) {
+                if ($value !== null && $value !== '') {
+                    return true;
+                }
+            }
+            return false;
+        });
+
         foreach ($sheet as $rowdata) {
             $data = [];
-            $data['update'] = (bool)  $rowdata[$index['update']];
-            $data['login'] = (string) $rowdata[$index['login']];
-            $data['usr_id'] = (int) $rowdata[$index['usr_id']];
-            $data['status'] = (string) $rowdata[$index['status']];
-            $data['mark'] = (string) $rowdata[$index['mark']];
-            $data['notice'] = (string) $rowdata[$index['notice']];
-            $data['comment'] = (string) $rowdata[$index['comment']];
-            $data['plag_flag'] = ((string) $rowdata[$index['plagiarism']] ? (string) $rowdata[$index['plagiarism']] : 'none');
-            $data['plag_comment'] = (string) $rowdata[$index['plag_comment']];
 
-            if (!$data['update'] || !isset($this->members[$data['usr_id']])) {
+            // Robust update flag parsing - handle various input types
+            $raw_update = $rowdata[$index['update']] ?? null;
+            if ($raw_update === null || $raw_update === '') {
+                $data['update'] = false;
+            } elseif (is_numeric($raw_update)) {
+                $data['update'] = (int)$raw_update !== 0;
+            } else {
+                $data['update'] = filter_var($raw_update, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
+            }
+
+            $data['login'] = (string) ($rowdata[$index['login']] ?? '');
+            $data['usr_id'] = (int) ($rowdata[$index['usr_id']] ?? 0);
+            $data['status'] = (string) ($rowdata[$index['status']] ?? '');
+            $data['mark'] = (string) ($rowdata[$index['mark']] ?? '');
+            $data['notice'] = (string) ($rowdata[$index['notice']] ?? '');
+            $data['comment'] = (string) ($rowdata[$index['comment']] ?? '');
+            $data['plag_flag'] = ((string) ($rowdata[$index['plagiarism']] ?? '') ?: 'none');
+            $data['plag_comment'] = (string) ($rowdata[$index['plag_comment']] ?? '');
+
+            // Skip rows without valid user ID
+            if ($data['usr_id'] === 0) {
+                continue;
+            }
+
+            if (!$data['update']) {
+                continue;
+            }
+
+            if (!isset($this->members[$data['usr_id']])) {
                 continue;
             }
 
             // Status normalisieren
             $data['status'] = $this->normalizeStatus($data['status']);
-            
+
             $this->checkRowData($data);
             $this->updates[] = $data;
         }
@@ -303,39 +333,64 @@ class ilPluginExAssignmentStatusFile extends ilExcel
         }
 
         $index = array_flip($this->team_titles);
+
+        // Filter empty rows before processing
+        // PhpSpreadsheet may include empty rows at the end when CSV ends with newline
+        $sheet = array_filter($sheet, function($row) {
+            foreach ($row as $value) {
+                if ($value !== null && $value !== '') {
+                    return true;
+                }
+            }
+            return false;
+        });
+
         $skipped_rows = 0;
-        
-        foreach ($sheet as $row_number => $rowdata) {
+
+        foreach ($sheet as $rowdata) {
             $data = [];
-            $data['update'] = (bool)  $rowdata[$index['update']];
-            $data['team_id'] = (string) $rowdata[$index['team_id']];
-            $data['status'] = (string) $rowdata[$index['status']];
-            $data['mark'] = (string) $rowdata[$index['mark']];
-            $data['notice'] = (string) $rowdata[$index['notice']];
-            $data['comment'] = (string) $rowdata[$index['comment']];
-            $data['plag_flag'] = ((string) $rowdata[$index['plagiarism']] ? (string) $rowdata[$index['plagiarism']] : 'none');
-            $data['plag_comment'] = (string) $rowdata[$index['plag_comment']];
+
+            // Robust update flag parsing
+            $raw_update = $rowdata[$index['update']] ?? null;
+            if ($raw_update === null || $raw_update === '') {
+                $data['update'] = false;
+            } elseif (is_numeric($raw_update)) {
+                $data['update'] = (int)$raw_update !== 0;
+            } else {
+                $data['update'] = filter_var($raw_update, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
+            }
+
+            $data['team_id'] = (string) ($rowdata[$index['team_id']] ?? '');
+            $data['status'] = (string) ($rowdata[$index['status']] ?? '');
+            $data['mark'] = (string) ($rowdata[$index['mark']] ?? '');
+            $data['notice'] = (string) ($rowdata[$index['notice']] ?? '');
+            $data['comment'] = (string) ($rowdata[$index['comment']] ?? '');
+            $data['plag_flag'] = ((string) ($rowdata[$index['plagiarism']] ?? '') ?: 'none');
+            $data['plag_comment'] = (string) ($rowdata[$index['plag_comment']] ?? '');
+
+            // Skip rows without valid team ID
+            if ($data['team_id'] === '' || $data['team_id'] === '0') {
+                continue;
+            }
 
             if (!$data['update']) {
                 $skipped_rows++;
                 continue;
             }
-            
+
             if (!isset($this->teams[$data['team_id']])) {
                 $skipped_rows++;
                 continue;
             }
 
             // Status normalisieren
-            $original_status = $data['status'];
-            $data['status'] = $this->normalizeStatus($original_status);
-            
+            $data['status'] = $this->normalizeStatus($data['status']);
+
             $this->checkRowData($data);
             $this->updates[] = $data;
         }
-        
-        $updates_count = count($this->updates);
-        if ($updates_count === 0 && $skipped_rows > 0) {
+
+        if (count($this->updates) === 0 && $skipped_rows > 0) {
             throw new ilExerciseException(
                 "No valid updates found! Check that:\n" .
                 "1. 'update' column is set to 1\n" .

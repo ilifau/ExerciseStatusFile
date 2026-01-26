@@ -55,6 +55,7 @@ class MultiFeedbackUploadWorkflowTest
             $this->testStatusFileChecksums();
             $this->testStatusFileDetection();
             $this->testWarningsInResponse();
+            $this->testLargeScaleUpload();
 
             $this->printResults();
 
@@ -489,6 +490,128 @@ class MultiFeedbackUploadWorkflowTest
         } else {
             echo "❌ Missing warning for 'no updates found'\n";
         }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 8: Large-Scale Upload (127 Users)
+     * Simulates a real-world scenario with many users
+     */
+    private function testLargeScaleUpload(): void
+    {
+        echo "📊 Test 8: Large-Scale Upload (127 Users)\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        $user_count = 127;
+        $start_time = microtime(true);
+
+        // 1. Create exercise and assignment
+        echo "   → Erstelle Übung und Aufgabe...\n";
+        $exercise = $this->helper->createTestExercise('_LargeScale');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test8_127Users');
+
+        // 2. Create 127 test users
+        echo "   → Erstelle $user_count Test-User...\n";
+        $users = $this->helper->createTestUsers($user_count);
+        echo "   ✅ $user_count User erstellt\n";
+
+        // 3. Create submissions for all users
+        echo "   → Erstelle Abgaben für alle User...\n";
+        $submission_count = 0;
+        foreach ($users as $user) {
+            $this->helper->createTestSubmission(
+                $assignment,
+                $user->getId(),
+                [
+                    [
+                        'filename' => 'submission.txt',
+                        'content' => "Abgabe von {$user->getLogin()}\nMatrikelnummer: " . rand(1000000, 9999999)
+                    ]
+                ]
+            );
+            $submission_count++;
+
+            // Progress indicator every 25 users
+            if ($submission_count % 25 === 0) {
+                echo "      ... $submission_count/$user_count Abgaben erstellt\n";
+            }
+        }
+        echo "   ✅ Alle Abgaben erstellt\n";
+
+        // 4. Download multi-feedback ZIP
+        echo "   → Lade Multi-Feedback ZIP herunter...\n";
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+        $this->recordResult('LargeScale: Download ZIP with 127 users', file_exists($zip_path));
+        echo "   ✅ ZIP heruntergeladen\n";
+
+        // 5. Modify status.csv - set every 2nd user to update=1, status=passed
+        echo "   → Modifiziere status.csv (jeder 2. User bekommt 'passed')...\n";
+        $updates = [];
+        $users_to_update = [];
+        for ($i = 0; $i < count($users); $i++) {
+            if ($i % 2 === 0) { // Every 2nd user (0, 2, 4, ...)
+                $updates[] = [
+                    'user_id' => $users[$i]->getId(),
+                    'update' => 1,
+                    'status' => 'passed'
+                ];
+                $users_to_update[] = $users[$i]->getId();
+            }
+        }
+
+        $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', $updates);
+        $this->recordResult('LargeScale: Modify status.csv with ' . count($updates) . ' updates', file_exists($modified_zip));
+        echo "   ✅ " . count($updates) . " User für Update markiert\n";
+
+        // 6. Upload modified ZIP
+        echo "   → Lade modifizierte ZIP hoch...\n";
+        $upload_start = microtime(true);
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+        $upload_duration = round(microtime(true) - $upload_start, 2);
+
+        $this->recordResult('LargeScale: Upload processed successfully', $upload_result['success'] ?? false);
+        echo "   ✅ Upload verarbeitet in {$upload_duration}s\n";
+
+        // 7. Verify status updates were applied
+        echo "   → Verifiziere Status-Updates...\n";
+        $verified_count = 0;
+        $failed_users = [];
+
+        foreach ($users_to_update as $user_id) {
+            $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $user_id);
+            if ($member_status === 'passed') {
+                $verified_count++;
+            } else {
+                $failed_users[] = $user_id;
+            }
+        }
+
+        $expected_updates = count($users_to_update);
+        $success_rate = round(($verified_count / $expected_updates) * 100, 1);
+
+        $this->recordResult('LargeScale: Status updates applied correctly', $verified_count === $expected_updates);
+
+        echo "   ✅ Verifiziert: $verified_count/$expected_updates User haben Status 'passed' ($success_rate%)\n";
+
+        if (!empty($failed_users) && count($failed_users) <= 5) {
+            echo "   ⚠️  Fehlgeschlagen für User-IDs: " . implode(', ', $failed_users) . "\n";
+        } elseif (!empty($failed_users)) {
+            echo "   ⚠️  " . count($failed_users) . " User wurden nicht aktualisiert\n";
+        }
+
+        // 8. Check for warnings
+        if (!empty($upload_result['warnings'])) {
+            echo "   ⚠️  Warnungen: " . implode('; ', $upload_result['warnings']) . "\n";
+        }
+
+        $total_duration = round(microtime(true) - $start_time, 2);
+        echo "\n   📈 Statistik:\n";
+        echo "      • User erstellt: $user_count\n";
+        echo "      • Abgaben erstellt: $submission_count\n";
+        echo "      • Status-Updates: $expected_updates\n";
+        echo "      • Erfolgreich aktualisiert: $verified_count\n";
+        echo "      • Gesamtdauer: {$total_duration}s\n";
 
         echo "\n";
     }
