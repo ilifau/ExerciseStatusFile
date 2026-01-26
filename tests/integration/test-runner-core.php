@@ -31,6 +31,7 @@ class IntegrationTestRunner
             $this->runTeamNotificationTests();
             $this->runNegativeTests();
             $this->runLargeScaleTest();
+            $this->runLargeScaleFullUpdateTest();
 
             $duration = round(microtime(true) - $start_time, 2);
 
@@ -805,6 +806,236 @@ class IntegrationTestRunner
         } catch (Exception $e) {
             echo "❌ FEHLER: " . $e->getMessage() . "\n\n";
             $this->recordResult('LargeScale: Complete workflow', false);
+        }
+    }
+
+    /**
+     * Test 8: Large-Scale Full Update (127 Users, ALL updated)
+     * Tests the system with all users receiving status updates
+     */
+    public function runLargeScaleFullUpdateTest(): void
+    {
+        echo "📊 Test 8: Large-Scale Full Update (127 Users, ALLE aktualisiert)\n";
+        echo "───────────────────────────────────────────────────────\n\n";
+
+        $user_count = 127;
+        $start_time = microtime(true);
+
+        try {
+            // 1. Create exercise and assignment
+            echo "→ Erstelle Übung und Aufgabe...\n";
+            $exercise = $this->helper->createTestExercise('_LargeScaleFull');
+            $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test8_127Users_Full');
+            echo "✅ Übung erstellt (ID: {$assignment->getId()})\n";
+
+            // 2. Create 127 test users
+            echo "→ Erstelle $user_count Test-User...\n";
+            $users = $this->helper->createTestUsers($user_count);
+            echo "✅ $user_count User erstellt\n";
+
+            // 3. Create submissions for all users
+            echo "→ Erstelle Abgaben für alle User...\n";
+            $submission_count = 0;
+            foreach ($users as $i => $user) {
+                $this->helper->createTestSubmission(
+                    $assignment,
+                    $user->getId(),
+                    [
+                        [
+                            'filename' => 'submission.txt',
+                            'content' => "Abgabe von {$user->getLogin()}\nMatrikelnummer: " . rand(1000000, 9999999)
+                        ]
+                    ]
+                );
+                $submission_count++;
+
+                if ($submission_count % 25 === 0) {
+                    echo "   ... $submission_count/$user_count Abgaben erstellt\n";
+                }
+            }
+            echo "✅ Alle $submission_count Abgaben erstellt\n";
+
+            // 4. Download multi-feedback ZIP
+            echo "→ Lade Multi-Feedback ZIP herunter...\n";
+            $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+            if (!file_exists($zip_path)) {
+                throw new Exception("ZIP konnte nicht erstellt werden");
+            }
+            echo "✅ ZIP heruntergeladen\n";
+
+            // 5. Modify status.csv - set ALL users to update=1 with alternating statuses
+            echo "→ Modifiziere status.csv (ALLE $user_count User bekommen Status-Updates)...\n";
+            $updates = [];
+            $users_to_update = [];
+            $expected_statuses = [];
+
+            for ($i = 0; $i < count($users); $i++) {
+                // Alternate between passed and failed
+                $status = ($i % 2 === 0) ? 'passed' : 'failed';
+
+                $updates[] = [
+                    'user_id' => $users[$i]->getId(),
+                    'update' => 1,
+                    'status' => $status
+                ];
+                $users_to_update[] = $users[$i]->getId();
+                $expected_statuses[$users[$i]->getId()] = $status;
+            }
+
+            $passed_count = count(array_filter($expected_statuses, fn($s) => $s === 'passed'));
+            $failed_count = count(array_filter($expected_statuses, fn($s) => $s === 'failed'));
+            echo "   📊 Status-Verteilung: $passed_count x passed, $failed_count x failed\n";
+
+            $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', $updates);
+
+            if (!file_exists($modified_zip)) {
+                throw new Exception("Modifizierte ZIP konnte nicht erstellt werden");
+            }
+
+            // DEBUG: Check CSV content in modified ZIP
+            $zip = new ZipArchive();
+            if ($zip->open($modified_zip) === true) {
+                $csv_content = $zip->getFromName('status.csv');
+                $lines = explode("\n", trim($csv_content));
+                echo "   🔍 CSV in ZIP hat " . (count($lines) - 1) . " Datenzeilen\n";
+
+                // Count update=1 entries
+                $update_count = 0;
+                $passed_in_csv = 0;
+                $failed_in_csv = 0;
+                foreach ($lines as $i => $line) {
+                    if ($i === 0) continue; // Skip header
+                    $parts = explode(';', $line);
+                    if (isset($parts[0]) && trim($parts[0], '"') === '1') {
+                        $update_count++;
+                        $status = isset($parts[5]) ? trim($parts[5], '"') : '';
+                        if ($status === 'passed') $passed_in_csv++;
+                        elseif ($status === 'failed') $failed_in_csv++;
+                    }
+                }
+                echo "   🔍 CSV: $update_count Zeilen mit update=1 (passed: $passed_in_csv, failed: $failed_in_csv)\n";
+                $zip->close();
+            }
+
+            echo "✅ " . count($updates) . " User für Update markiert (alle)\n";
+
+            // 6. Upload modified ZIP
+            echo "→ Lade modifizierte ZIP hoch...\n";
+            $upload_start = microtime(true);
+            $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+            $upload_duration = round(microtime(true) - $upload_start, 2);
+
+            if (!($upload_result['success'] ?? false)) {
+                echo "   ⚠️  Upload-Fehler: " . ($upload_result['error'] ?? 'Unbekannt') . "\n";
+            }
+            echo "✅ Upload verarbeitet in {$upload_duration}s\n";
+
+            // 7. Verify ALL status updates were applied correctly
+            echo "→ Verifiziere Status-Updates für ALLE User...\n";
+            $verified_passed = 0;
+            $verified_failed = 0;
+            $wrong_status = [];
+
+            // DEBUG: Check directly in database what statuses are set
+            global $DIC;
+            $db = $DIC->database();
+
+            // Check exc_members (Exercise-level status - used by _lookupStatus)
+            $query = "SELECT usr_id, status FROM exc_members WHERE obj_id = " . $db->quote($assignment->getExerciseId(), 'integer');
+            $result = $db->query($query);
+            $db_statuses = [];
+            while ($row = $db->fetchAssoc($result)) {
+                $db_statuses[(int)$row['usr_id']] = $row['status'];
+            }
+            $db_passed = count(array_filter($db_statuses, fn($s) => $s === 'passed'));
+            $db_failed = count(array_filter($db_statuses, fn($s) => $s === 'failed'));
+            $db_notgraded = count(array_filter($db_statuses, fn($s) => $s === 'notgraded'));
+            echo "   🔍 DB exc_members: passed=$db_passed, failed=$db_failed, notgraded=$db_notgraded\n";
+
+            // Check exc_mem_ass_status (Assignment-level status - where plugin writes)
+            $query2 = "SELECT usr_id, status FROM exc_mem_ass_status WHERE ass_id = " . $db->quote($assignment->getId(), 'integer');
+            $result2 = $db->query($query2);
+            $ass_statuses = [];
+            while ($row = $db->fetchAssoc($result2)) {
+                $ass_statuses[(int)$row['usr_id']] = $row['status'];
+            }
+            $ass_passed = count(array_filter($ass_statuses, fn($s) => $s === 'passed'));
+            $ass_failed = count(array_filter($ass_statuses, fn($s) => $s === 'failed'));
+            $ass_notgraded = count(array_filter($ass_statuses, fn($s) => $s === 'notgraded'));
+            echo "   🔍 DB exc_mem_ass_status: passed=$ass_passed, failed=$ass_failed, notgraded=$ass_notgraded\n";
+
+            // Use exc_mem_ass_status (Assignment-level status) for verification
+            // because exc_members contains the calculated Exercise-level status which
+            // only shows 'failed' if a MANDATORY assignment is failed
+            foreach ($users_to_update as $user_id) {
+                $actual_status = $ass_statuses[$user_id] ?? 'not_found';
+                $expected_status = $expected_statuses[$user_id];
+
+                if ($actual_status === $expected_status) {
+                    if ($expected_status === 'passed') {
+                        $verified_passed++;
+                    } else {
+                        $verified_failed++;
+                    }
+                } else {
+                    $wrong_status[] = [
+                        'user_id' => $user_id,
+                        'expected' => $expected_status,
+                        'actual' => $actual_status
+                    ];
+                }
+            }
+
+            $total_verified = $verified_passed + $verified_failed;
+            $success_rate = round(($total_verified / $user_count) * 100, 1);
+
+            echo "✅ Verifiziert: $total_verified/$user_count User korrekt aktualisiert ($success_rate%)\n";
+            echo "   • passed: $verified_passed (erwartet: $passed_count)\n";
+            echo "   • failed: $verified_failed (erwartet: $failed_count)\n";
+
+            if (!empty($wrong_status)) {
+                echo "   ⚠️  Falsche Status für " . count($wrong_status) . " User:\n";
+
+                // Count by actual status
+                $actual_counts = [];
+                foreach ($wrong_status as $ws) {
+                    $actual = $ws['actual'] ?: 'null/empty';
+                    $actual_counts[$actual] = ($actual_counts[$actual] ?? 0) + 1;
+                }
+                echo "   📊 Verteilung der falschen Status:\n";
+                foreach ($actual_counts as $status => $count) {
+                    echo "      - '$status': $count User\n";
+                }
+
+                // Show first 5 examples
+                foreach (array_slice($wrong_status, 0, 5) as $ws) {
+                    echo "      - User {$ws['user_id']}: erwartet '{$ws['expected']}', ist '{$ws['actual']}'\n";
+                }
+                if (count($wrong_status) > 5) {
+                    echo "      ... und " . (count($wrong_status) - 5) . " weitere\n";
+                }
+            }
+
+            // Record results - require 100% success rate
+            $this->recordResult('LargeScaleFull: Download ZIP with 127 users', file_exists($zip_path));
+            $this->recordResult('LargeScaleFull: Modify status.csv (all users)', file_exists($modified_zip));
+            $this->recordResult('LargeScaleFull: Upload processed', $upload_result['success'] ?? false);
+            $this->recordResult('LargeScaleFull: All 127 status updates verified (' . $success_rate . '%)', $success_rate >= 100.0);
+
+            $total_duration = round(microtime(true) - $start_time, 2);
+            echo "\n📈 Statistik:\n";
+            echo "   • User erstellt: $user_count\n";
+            echo "   • Abgaben erstellt: $submission_count\n";
+            echo "   • Status-Updates: " . count($updates) . " (alle User)\n";
+            echo "   • Korrekt aktualisiert: $total_verified\n";
+            echo "   • Gesamtdauer: {$total_duration}s\n";
+
+            echo "\n✅ Test abgeschlossen: Large-Scale Full Update Test erfolgreich\n\n";
+
+        } catch (Exception $e) {
+            echo "❌ FEHLER: " . $e->getMessage() . "\n\n";
+            $this->recordResult('LargeScaleFull: Complete workflow', false);
         }
     }
 

@@ -1756,7 +1756,10 @@ class ilExTeamButtonRenderer
 
                             // Output area (initially hidden)
                             '<div id=\"test-output-container\" style=\"display: none;\">' +
-                                '<h3 style=\"color: #569cd6;\">Test-Ausgabe:</h3>' +
+                                '<div style=\"display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;\">' +
+                                    '<h3 style=\"color: #569cd6; margin: 0;\">Test-Ausgabe:</h3>' +
+                                    '<button id=\"copy-output-btn\" style=\"background: #0d6efd; color: white; border: none; padding: 8px 16px; font-size: 14px; border-radius: 4px; cursor: pointer;\">📋 Kopieren</button>' +
+                                '</div>' +
                                 '<pre id=\"test-output\" style=\"background: #252526; padding: 20px; border-radius: 4px; max-height: 600px; overflow-y: auto; font-family: monospace; line-height: 1.5; white-space: pre-wrap; border: 1px solid #3c3c3c;\"></pre>' +
                                 '<div id=\"test-links\" style=\"margin-top: 20px; padding: 15px; background: #1a3d1a; border-left: 4px solid #4ec9b0; border-radius: 4px; display: none;\">' +
                                     '<h4 style=\"color: #4ec9b0; margin-top: 0;\">📋 Erstellte Übungen:</h4>' +
@@ -1774,11 +1777,46 @@ class ilExTeamButtonRenderer
                         var closeBtn = document.getElementById('close-test-modal');
                         var startBtn = document.getElementById('start-tests-btn');
                         var cleanupOnlyBtn = document.getElementById('cleanup-only-btn');
+                        var copyOutputBtn = document.getElementById('copy-output-btn');
                         var optionsPanel = document.getElementById('test-options');
                         var createdExercises = [];
 
                         closeBtn.onclick = function() {
                             modal.remove();
+                        };
+
+                        // Copy output button handler
+                        copyOutputBtn.onclick = function() {
+                            var textToCopy = output.textContent;
+                            navigator.clipboard.writeText(textToCopy).then(function() {
+                                var originalText = copyOutputBtn.textContent;
+                                copyOutputBtn.textContent = '✅ Kopiert!';
+                                copyOutputBtn.style.background = '#28a745';
+                                setTimeout(function() {
+                                    copyOutputBtn.textContent = originalText;
+                                    copyOutputBtn.style.background = '#0d6efd';
+                                }, 2000);
+                            }).catch(function(err) {
+                                // Fallback for older browsers
+                                var textArea = document.createElement('textarea');
+                                textArea.value = textToCopy;
+                                textArea.style.position = 'fixed';
+                                textArea.style.left = '-9999px';
+                                document.body.appendChild(textArea);
+                                textArea.select();
+                                try {
+                                    document.execCommand('copy');
+                                    copyOutputBtn.textContent = '✅ Kopiert!';
+                                    copyOutputBtn.style.background = '#28a745';
+                                    setTimeout(function() {
+                                        copyOutputBtn.textContent = '📋 Kopieren';
+                                        copyOutputBtn.style.background = '#0d6efd';
+                                    }, 2000);
+                                } catch (e) {
+                                    alert('Kopieren fehlgeschlagen: ' + e);
+                                }
+                                document.body.removeChild(textArea);
+                            });
                         };
 
                         // Cleanup-only button handler

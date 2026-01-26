@@ -452,7 +452,7 @@ class ilPluginExAssignmentStatusFile extends ilExcel
     }
 
     public function applyStatusUpdates() {
-        foreach ($this->updates as $i => $data) {
+        foreach ($this->updates as $data) {
             $user_ids = [];
             if (isset($data['usr_id'])) {
                 $user_ids = [$data['usr_id']];
@@ -469,15 +469,15 @@ class ilPluginExAssignmentStatusFile extends ilExcel
                 $status->setMark($data['mark']);
                 $status->setComment($data['comment']);
                 $status->setNotice($data['notice']);
-                
+
                 if ($this->allow_plag_update) {
                     // TODO: Plagiarism flags when available
                 }
-                
+
                 $status->update();
             }
         }
-        
+
         $this->updates_applied = true;
     }
 
