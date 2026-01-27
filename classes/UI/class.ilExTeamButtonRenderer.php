@@ -110,9 +110,12 @@ class ilExTeamButtonRenderer
             'error_no_users_selected' => $this->plugin->txt('error_no_users_selected'),
         ];
         
-        // Alle Strings mit addslashes() escapen für JavaScript
+        // Alle Strings sicher für JavaScript escapen
+        // json_encode() escaped korrekt: \n, \r, \t, ", ', \, und Unicode
         foreach ($txt as $key => $value) {
-            $txt[$key] = addslashes($value);
+            $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+            // Entferne die umgebenden Anführungszeichen von json_encode
+            $txt[$key] = substr($encoded, 1, -1);
         }
         
         $this->template->addOnLoadCode('

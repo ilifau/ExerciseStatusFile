@@ -1370,7 +1370,7 @@ class ilExFeedbackUploadHandler
     private function createTempDirectory(string $prefix): string
     {
         $temp_dir = sys_get_temp_dir() . '/plugin_' . $prefix . '_' . uniqid();
-        mkdir($temp_dir, 0777, true);
+        mkdir($temp_dir, 0700, true);  // Nur Owner-Zugriff für Sicherheit
         $this->temp_directories[] = $temp_dir;
         
         return $temp_dir;

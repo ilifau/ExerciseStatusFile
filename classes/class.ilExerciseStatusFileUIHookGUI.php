@@ -34,6 +34,62 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     }
 
     /**
+     * Prüft ob der aktuelle User Bewertungsrechte für ein Assignment hat
+     *
+     * Berechtigung: 'edit_submissions_grades' (Tutor) oder 'write' (Admin)
+     *
+     * @param int $assignment_id Die Assignment-ID
+     * @return bool True wenn User berechtigt ist
+     */
+    private function checkAssignmentAccess(int $assignment_id): bool
+    {
+        global $DIC;
+
+        try {
+            $assignment = new \ilExAssignment($assignment_id);
+            $exercise_id = $assignment->getExerciseId();
+            $refs = \ilObject::_getAllReferences($exercise_id);
+
+            if (empty($refs)) {
+                $this->logger->error("ExerciseStatusFile: No references found for exercise $exercise_id");
+                return false;
+            }
+
+            $ref_id = (int) reset($refs);
+
+            // Prüfe Tutor-Berechtigung (edit_submissions_grades) oder Admin (write)
+            $has_access = $DIC->access()->checkAccess('edit_submissions_grades', '', $ref_id, 'exc')
+                || $DIC->access()->checkAccess('write', '', $ref_id, 'exc');
+
+            if (!$has_access) {
+                $this->logger->error("ExerciseStatusFile: Access denied for user " . $DIC->user()->getId() . " on assignment $assignment_id (ref_id: $ref_id)");
+            }
+
+            return $has_access;
+
+        } catch (Exception $e) {
+            $this->logger->error("ExerciseStatusFile: Access check failed: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Sendet eine 403 Forbidden Response
+     */
+    private function sendAccessDeniedResponse(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        header('HTTP/1.1 403 Forbidden');
+
+        echo json_encode([
+            'success' => false,
+            'error' => true,
+            'message' => 'Zugriff verweigert. Sie haben keine Berechtigung für diese Aktion.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    /**
      * HTML-Hook Processing mit Multi-Feedback Download Support
      */
     public function getHTML(string $a_comp, string $a_part, array $a_par = []): array
@@ -168,11 +224,17 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     {
         try {
             $assignment_id = $_GET['ass_id'] ?? $_POST['ass_id'] ?? null;
-            
+
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Invalid or missing assignment ID");
             }
-            
+
+            // Sicherheitsprüfung: Hat User Bewertungsrechte?
+            if (!$this->checkAssignmentAccess((int)$assignment_id)) {
+                $this->sendAccessDeniedResponse();
+                return;
+            }
+
             $team_provider = new ilExTeamDataProvider();
             $team_provider->generateJSONResponse((int)$assignment_id);
             
@@ -202,14 +264,20 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Invalid assignment ID: " . var_export($assignment_id, true));
             }
-            
+
+            // Sicherheitsprüfung: Hat User Bewertungsrechte?
+            if (!$this->checkAssignmentAccess((int)$assignment_id)) {
+                $this->sendAccessDeniedResponse();
+                return;
+            }
+
             if (!isset($_FILES['zip_file']) || $_FILES['zip_file']['error'] !== UPLOAD_ERR_OK) {
                 $upload_error = $_FILES['zip_file']['error'] ?? 'unknown';
                 throw new Exception("No valid ZIP file uploaded. Upload error: " . $upload_error);
             }
-            
+
             $uploaded_file = $_FILES['zip_file'];
-            
+
             // Upload-Handler verwenden
             $upload_handler = new ilExFeedbackUploadHandler();
             $upload_handler->handleFeedbackUpload([
@@ -281,6 +349,12 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
 
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Ungültige Assignment-ID");
+            }
+
+            // Sicherheitsprüfung: Hat User Bewertungsrechte?
+            if (!$this->checkAssignmentAccess((int)$assignment_id)) {
+                $this->sendAccessDeniedResponse();
+                return;
             }
 
             if (empty($team_ids_string)) {
@@ -481,11 +555,17 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     {
         try {
             $assignment_id = $_GET['ass_id'] ?? $_POST['ass_id'] ?? null;
-            
+
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Invalid or missing assignment ID");
             }
-            
+
+            // Sicherheitsprüfung: Hat User Bewertungsrechte?
+            if (!$this->checkAssignmentAccess((int)$assignment_id)) {
+                $this->sendAccessDeniedResponse();
+                return;
+            }
+
             $user_provider = new ilExUserDataProvider();
             $user_provider->generateJSONResponse((int)$assignment_id);
             
@@ -513,23 +593,29 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
         try {
             $assignment_id = $_POST['ass_id'] ?? null;
             $user_ids_string = $_POST['user_ids'] ?? '';
-            
+
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Invalid assignment ID");
             }
-            
+
+            // Sicherheitsprüfung: Hat User Bewertungsrechte?
+            if (!$this->checkAssignmentAccess((int)$assignment_id)) {
+                $this->sendAccessDeniedResponse();
+                return;
+            }
+
             if (empty($user_ids_string)) {
                 throw new Exception("No users selected");
             }
-            
+
             // User-IDs parsen
             $user_ids = array_map('intval', explode(',', $user_ids_string));
             $user_ids = array_filter($user_ids, function($id) { return $id > 0; });
-            
+
             if (empty($user_ids)) {
                 throw new Exception("No valid user IDs provided");
             }
-            
+
             // Individual Multi-Feedback Download Handler verwenden
             $individual_handler = new ilExIndividualMultiFeedbackDownloadHandler();
             $individual_handler->generateIndividualMultiFeedbackDownload((int)$assignment_id, $user_ids);
