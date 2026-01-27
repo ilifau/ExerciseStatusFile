@@ -294,25 +294,37 @@ class ilExTeamButtonRenderer
                         this.initiateMultiFeedbackDownload(assignmentId, selectedTeams);
                     },
                     
+                    getFilenameFromHeader: function(xhr) {
+                        var disposition = xhr.getResponseHeader("Content-Disposition");
+                        if (disposition && disposition.indexOf("filename=") !== -1) {
+                            var matches = disposition.match(/filename[^;=\\n]*=(["\']?)([^"\'\\n]*)\1/);
+                            if (matches && matches[2]) {
+                                return matches[2];
+                            }
+                        }
+                        return null;
+                    },
+
                     initiateMultiFeedbackDownload: function(assignmentId, teamIds) {
                         this.showProgressModal(assignmentId, teamIds);
-                        
+
                         var xhr = new XMLHttpRequest();
                         xhr.open("POST", window.location.pathname, true);
                         xhr.responseType = "blob";
-                        
+
                         var formData = new FormData();
                         formData.append("ass_id", assignmentId);
                         formData.append("team_ids", teamIds.join(","));
                         formData.append("plugin_action", "multi_feedback_download");
-                        
+
                         xhr.onload = function() {
                             if (xhr.status === 200) {
                                 var blob = xhr.response;
                                 var url = window.URL.createObjectURL(blob);
                                 var a = document.createElement("a");
                                 a.href = url;
-                                a.download = "Multi_Feedback_Download.zip";
+                                var filename = window.ExerciseStatusFilePlugin.getFilenameFromHeader(xhr);
+                                a.download = filename || "multifeedback_team.zip";
                                 document.body.appendChild(a);
                                 a.click();
                                 document.body.removeChild(a);
@@ -986,28 +998,29 @@ class ilExTeamButtonRenderer
                     
                     initiateIndividualMultiFeedbackDownload: function(assignmentId, userIds) {
                         this.showIndividualProgressModal(assignmentId, userIds);
-                        
+
                         var xhr = new XMLHttpRequest();
                         xhr.open("POST", window.location.pathname, true);
                         xhr.responseType = "blob";
-                        
+
                         var formData = new FormData();
                         formData.append("ass_id", assignmentId);
                         formData.append("user_ids", userIds.join(","));
                         formData.append("plugin_action", "multi_feedback_download_individual");
-                        
+
                         xhr.onload = function() {
                             if (xhr.status === 200) {
                                 var blob = xhr.response;
                                 var url = window.URL.createObjectURL(blob);
                                 var a = document.createElement("a");
                                 a.href = url;
-                                a.download = "Individual_Multi_Feedback_Download.zip";
+                                var filename = window.ExerciseStatusFilePlugin.getFilenameFromHeader(xhr);
+                                a.download = filename || "multifeedback.zip";
                                 document.body.appendChild(a);
                                 a.click();
                                 document.body.removeChild(a);
                                 window.URL.revokeObjectURL(url);
-                                
+
                                 window.ExerciseStatusFilePlugin.closeIndividualProgressModal();
                             } else {
                                 var reader = new FileReader();

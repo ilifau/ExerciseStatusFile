@@ -183,34 +183,51 @@ abstract class ilExMultiFeedbackDownloadHandlerBase
     }
 
     /**
+     * Ref-ID aus Assignment ermitteln
+     */
+    protected function getRefIdFromAssignment(\ilExAssignment $assignment): int
+    {
+        try {
+            $exercise_id = $assignment->getExerciseId();
+            $refs = \ilObject::_getAllReferences($exercise_id);
+
+            if (!empty($refs)) {
+                // Nimm die erste (und meist einzige) ref_id
+                return (int) reset($refs);
+            }
+
+            return 0;
+        } catch (Exception $e) {
+            $this->logger->error("Could not get ref_id for assignment: " . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
      * ZIP-Filename generieren
+     * Format: multifeedback[_team]_{title}_rid_{ref_id}_aid_{ass_id}.zip
      */
     protected function generateZIPFilename(\ilExAssignment $assignment, array $entities): string
     {
-        $base_name = $this->toAscii($assignment->getTitle());
-        $count = count($entities);
-        $timestamp = date('Y-m-d_H-i-s');
+        $ref_id = $this->getRefIdFromAssignment($assignment);
+        $ass_id = $assignment->getId();
+        $title = $this->toAscii($assignment->getTitle());
 
         if ($this->getEntityType() === 'team') {
-            return "Multi_Feedback_{$base_name}_{$count}_Teams_{$timestamp}.zip";
+            return "multifeedback_team_{$title}_rid_{$ref_id}_aid_{$ass_id}.zip";
         } else {
-            return "Multi_Feedback_Individual_{$base_name}_{$count}_Users_{$timestamp}.zip";
+            return "multifeedback_{$title}_rid_{$ref_id}_aid_{$ass_id}.zip";
         }
     }
 
     /**
      * Download-Filename generieren
+     * Format: multifeedback[_team]_{title}_rid_{ref_id}_aid_{ass_id}.zip
      */
     protected function generateDownloadFilename(\ilExAssignment $assignment, array $entities): string
     {
-        $base_name = $this->toAscii($assignment->getTitle());
-        $count = count($entities);
-
-        if ($this->getEntityType() === 'team') {
-            return "Multi_Feedback_{$base_name}_{$count}_Teams.zip";
-        } else {
-            return "Multi_Feedback_Individual_{$base_name}_{$count}_Users.zip";
-        }
+        // Gleicher Filename wie generateZIPFilename für konsistente Benennung
+        return $this->generateZIPFilename($assignment, $entities);
     }
 
     /**
