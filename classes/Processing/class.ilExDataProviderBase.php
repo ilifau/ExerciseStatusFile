@@ -152,7 +152,8 @@ abstract class ilExDataProviderBase
 
         try {
             // 1 Query für ALLE User-Status statt N einzelne Queries
-            $query = "SELECT usr_id, status, mark, notice, comment
+            // Hinweis: Die Spalte heißt 'u_comment', nicht 'comment'
+            $query = "SELECT usr_id, status, mark, notice, u_comment
                       FROM exc_mem_ass_status
                       WHERE ass_id = " . $this->db->quote($assignment_id, 'integer') . "
                       AND " . $this->db->in('usr_id', $user_ids, false, 'integer');
@@ -166,7 +167,7 @@ abstract class ilExDataProviderBase
                     'status' => $this->translateStatus($row['status'] ?? null),
                     'mark' => $row['mark'] ?: '',
                     'notice' => $row['notice'] ?: '',
-                    'comment' => $row['comment'] ?: ''
+                    'comment' => $row['u_comment'] ?: ''
                 ];
             }
 
