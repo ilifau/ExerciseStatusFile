@@ -186,3 +186,12 @@ upload_modified_submissions_detected#:#Veränderte Submissions erkannt
 upload_modified_submissions_renamed#:#veränderte Submission(s) wurden automatisch umbenannt und als Feedback hochgeladen
 upload_renamed_file_list#:#Umbenannte Dateien
 upload_modified_submission_hint#:#Hinweis: Veränderte Submissions wurden automatisch umbenannt, um sie als Feedback erkennbar zu machen. Bitte prüfen Sie die hochgeladenen Dateien.
+
+<!-- Plugin Configuration -->
+plugin_configuration#:#Plugin-Konfiguration
+config_section_notifications#:#E-Mail-Benachrichtigungen
+config_debug_email#:#Debug-Modus aktivieren
+config_debug_email_info#:#Im Debug-Modus werden keine echten E-Mails an Studierende verschickt. Stattdessen werden alle Details im ILIAS-Log protokolliert. Empfohlen für Test-Systeme und während der Einrichtung.
+config_current_status#:#Aktueller Status
+config_debug_mode_active#:#Debug-Modus aktiv - Keine echten E-Mails werden verschickt
+config_production_mode_active#:#Produktiv-Modus - E-Mails werden an Studierende verschickt

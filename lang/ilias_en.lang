@@ -186,3 +186,12 @@ upload_modified_submissions_detected#:#Modified submissions detected
 upload_modified_submissions_renamed#:#modified submission(s) were automatically renamed and uploaded as feedback
 upload_renamed_file_list#:#Renamed files
 upload_modified_submission_hint#:#Note: Modified submissions were automatically renamed to make them recognizable as feedback. Please review the uploaded files.
+
+<!-- Plugin Configuration -->
+plugin_configuration#:#Plugin Configuration
+config_section_notifications#:#Email Notifications
+config_debug_email#:#Enable Debug Mode
+config_debug_email_info#:#In debug mode, no real emails are sent to students. Instead, all details are logged in the ILIAS log. Recommended for test systems and during setup.
+config_current_status#:#Current Status
+config_debug_mode_active#:#Debug mode active - No real emails are sent
+config_production_mode_active#:#Production mode - Emails are sent to students
