@@ -1464,36 +1464,47 @@ class ilExTeamButtonRenderer
             setTimeout(function() {
                 window.ExerciseStatusFilePlugin.removeExistingPluginBox();
 
-                var targetContainer = null;
-                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+                // Duplikat-Prüfung
+                if (document.getElementById('exstatusfile-team-btn')) {
+                    return;
+                }
 
-                for (var i = 0; i < allButtons.length; i++) {
-                    var btn = allButtons[i];
-                    if (btn.value && (btn.value.includes('Einzelteams') || btn.value.includes('herunterladen'))) {
-                        targetContainer = btn.parentNode;
+                var targetContainer = null;
+                var insertAfterElement = null;
+
+                // Suche nach 'Download All Submissions' / 'Alle Abgaben herunterladen' Button
+                // ILIAS 9: Toolbar-Struktur geändert, suche breiter nach allen Buttons
+                var allElements = document.querySelectorAll('button, input[type=\"submit\"], input[type=\"button\"]');
+
+                for (var i = 0; i < allElements.length; i++) {
+                    var el = allElements[i];
+                    var text = el.value || el.textContent || '';
+                    // DE: 'Abgaben herunterladen', EN: 'Download Submissions/returned'
+                    if (text.includes('Abgaben') || text.includes('Submissions') || (text.includes('Download') && text.includes('returned'))) {
+                        targetContainer = el.parentNode;
+                        insertAfterElement = el;
                         break;
                     }
                 }
 
                 if (targetContainer) {
-                    var multiFeedbackBtn = document.createElement('input');
+                    var multiFeedbackBtn = document.createElement('button');
+                    multiFeedbackBtn.id = 'exstatusfile-team-btn';
                     multiFeedbackBtn.type = 'button';
-                    multiFeedbackBtn.value = '{$btn_text}';
-                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
-
-                    var existingButton = targetContainer.querySelector('input[type=\"submit\"], input[type=\"button\"]');
-                    if (existingButton && existingButton.className) {
-                        multiFeedbackBtn.className = existingButton.className;
-                        multiFeedbackBtn.style.background = '#4c6586';
-                        multiFeedbackBtn.style.borderColor = '#4c6586';
-                        multiFeedbackBtn.style.color = 'white';
-                    }
+                    multiFeedbackBtn.textContent = '{$btn_text}';
+                    multiFeedbackBtn.className = 'btn btn-default';
+                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586;';
 
                     multiFeedbackBtn.onclick = function() {
                         window.ExerciseStatusFilePlugin.startTeamMultiFeedback($assignment_id);
                     };
 
-                    targetContainer.appendChild(multiFeedbackBtn);
+                    // Nach dem Download-Button einfügen
+                    if (insertAfterElement && insertAfterElement.nextSibling) {
+                        targetContainer.insertBefore(multiFeedbackBtn, insertAfterElement.nextSibling);
+                    } else {
+                        targetContainer.appendChild(multiFeedbackBtn);
+                    }
                 }
             }, {$instant_delay});
         ");
