@@ -431,6 +431,7 @@ class IntegrationTestHelper
         require_once __DIR__ . '/../../classes/Processing/class.ilExFeedbackUploadHandler.php';
 
         $handler = new ilExFeedbackUploadHandler();
+        $handler->setSuppressUIMessages(true); // Prevent messages from showing on next page during tests
 
         $parameters = [
             'assignment_id' => $assignment_id,
@@ -1003,6 +1004,7 @@ class IntegrationTestHelper
 
             // Process the upload
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -1067,6 +1069,7 @@ class IntegrationTestHelper
 
             // Try to process this status file
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
 
             // Simulate the upload by creating a ZIP
             $zip_path = sys_get_temp_dir() . '/invalid_status_' . uniqid() . '.zip';
@@ -1131,6 +1134,7 @@ class IntegrationTestHelper
             $zip_content = file_get_contents($zip_path);
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -1177,6 +1181,7 @@ class IntegrationTestHelper
             $zip_content = file_get_contents($zip_path);
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -1207,6 +1212,7 @@ class IntegrationTestHelper
             $fake_zip_content = 'This is not a valid ZIP file! Just random text.';
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -1245,6 +1251,7 @@ class IntegrationTestHelper
             $zip_content = file_get_contents($zip_path);
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,

@@ -17,15 +17,25 @@ class ilExFeedbackUploadHandler
     private array $processing_stats = [];
     private array $renamed_files = []; // Tracking für umbenannte Dateien
     private array $warnings = []; // Warnungen für den User (werden in Response zurückgegeben)
-    
+    private bool $suppress_ui_messages = false;
+
     public function __construct()
     {
         global $DIC;
         $this->logger = $DIC->logger()->root();
-        
+
         register_shutdown_function([$this, 'cleanupAllTempDirectories']);
     }
-    
+
+    /**
+     * Suppress UI messages (setOnScreenMessage calls)
+     * Use this for automated tests to prevent messages from appearing on next page load
+     */
+    public function setSuppressUIMessages(bool $suppress): void
+    {
+        $this->suppress_ui_messages = $suppress;
+    }
+
     /**
      * Feedback Upload Processing
      */
@@ -657,8 +667,10 @@ class ilExFeedbackUploadHandler
                             $status_file->applyStatusUpdates();
                             $this->clearAssignmentCaches($assignment_id);
                             
-                            global $DIC;
-                            $DIC->ui()->mainTemplate()->setOnScreenMessage('success', $status_file->getInfo(), true);
+                            if (!$this->suppress_ui_messages) {
+                                global $DIC;
+                                $DIC->ui()->mainTemplate()->setOnScreenMessage('success', $status_file->getInfo(), true);
+                            }
                             
                             $this->processing_stats['status_updates'] = $updates_count;
                             $this->processing_stats['processed_file'] = basename($file_path);
