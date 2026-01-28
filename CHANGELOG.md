@@ -4,11 +4,51 @@ Alle wichtigen Änderungen am ExerciseStatusFile Plugin werden in dieser Datei d
 
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.0] - 2026-01-28
+
+### Hinzugefügt
+
+#### Plugin-Konfigurationsseite
+- **Neue Admin-Konfigurationsseite** in ILIAS-Administration
+  - Zugriff: Administration → Plugins → ExerciseStatusFile → Konfigurieren
+  - Debug-Modus für E-Mail-Benachrichtigungen per Checkbox umschaltbar
+  - Persistente Speicherung in ILIAS-Datenbank (ilSetting)
+  - Status-Anzeige: Aktueller Modus wird angezeigt
+
+#### Verbesserte E-Mail Steuerung
+- **Admin-UI für Debug-Modus**
+  - Keine Code-Änderungen mehr nötig
+  - Sofort umschaltbar ohne Server-Neustart
+  - Nur für Administratoren zugänglich
+
+### Geändert
+
+#### Debug-Modus Verwaltung
+- **Priorität der Einstellungen:**
+  1. Datenbank-Setting (Admin-UI) → Primäre Quelle
+  2. PHP-Konstante → Legacy-Fallback
+  3. Default: true (sicher)
+- Legacy-Konstante `DEBUG_EMAIL_NOTIFICATIONS` wird weiterhin als Fallback unterstützt
+
+#### Neue Sprach-Keys
+- `plugin_configuration` - Plugin-Konfiguration
+- `config_section_notifications` - E-Mail-Benachrichtigungen
+- `config_debug_email` - Debug-Modus aktivieren
+- `config_debug_email_info` - Info-Text
+- `config_current_status` - Aktueller Status
+- `config_debug_mode_active` - Debug-Modus aktiv
+- `config_production_mode_active` - Produktiv-Modus
+
+### Behoben
+- UI-Meldungen bei Integration-Tests unterdrückt (keine störenden Meldungen mehr)
+
+---
+
 ## [1.2.0] - 2025-01-04
 
 ### Hinzugefügt
 
-#### E-Mail Benachrichtigungen 📧
+#### E-Mail Benachrichtigungen
 - **Automatische E-Mail-Benachrichtigungen** beim Feedback-Upload
   - Studenten werden benachrichtigt wenn Tutor Feedback-Dateien hochlädt
   - Funktioniert für Individual- und Team-Assignments
@@ -16,10 +56,9 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   - Duplicate-Prevention verhindert Mehrfach-Mails innerhalb eines Requests
 
 - **Debug-Modus für sichere Tests**
-  - Neue Konstante `DEBUG_EMAIL_NOTIFICATIONS` in `class.ilExerciseStatusFilePlugin.php`
+  - Konstante `DEBUG_EMAIL_NOTIFICATIONS` in `class.ilExerciseStatusFilePlugin.php`
   - `true` = Debug-Modus (nur Logs, keine echten E-Mails) - **Standard**
   - `false` = Produktiv-Modus (echte E-Mails werden verschickt)
-  - Admin-Benachrichtigungen im Browser (nur für Admins sichtbar)
   - Ausführliche Logs mit allen Details
 
 - **Neue Klasse: `ilExFeedbackNotificationSender`**
@@ -36,20 +75,11 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   - Alle Tests im Debug-Modus (keine echten E-Mails)
 
 - **Modal-Integration für Tests**
-  - "🧪 Run Tests" Button in ILIAS UI (Übung → Abgaben und Noten)
+  - "Run Tests" Button in ILIAS UI (Übung → Abgaben und Noten)
   - Live-Output im Browser
   - Automatisches Cleanup
-  - Neue Option: "📧 Nur E-Mail-Benachrichtigungs-Tests"
 
-- **Test-Ergebnisse:** 12/12 Tests bestanden in 8.93s ✅
-
-#### Dokumentation
-- `tests/MODAL_TEST_GUIDE.md` - Guide für Modal-basierte Tests
-- `tests/NOTIFICATION_TEST_GUIDE.md` - Ausführliche Notification-Dokumentation
-- `tests/integration/NOTIFICATION_TESTING.md` - Quick Start für CLI/Web
-- `ki_infos/integration_tests_updated_2025_01_04.md` - Update-Dokumentation
-- `ki_infos/branch_status_fix_and_performance.md` - Branch-Status Report
-- `CHANGELOG.md` - Changelog-Datei (diese Datei)
+- **Test-Ergebnisse:** 12/12 Tests bestanden
 
 ### Geändert
 
@@ -58,24 +88,9 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   - Verwendet `ilExAssignmentTeam::getInstancesFromMap()` statt einzelne Queries
   - Reduziert DB-Queries von O(n) auf O(1)
   - ~10x schneller bei Team-Assignments mit vielen Mitgliedern
-  - N+1 Query Problem gelöst
-
-#### Code-Verbesserungen
-- `ilExFeedbackUploadHandler`: Integration von Benachrichtigungen
-  - Zeile 920-921: Benachrichtigung nach ResourceStorage-Upload
-  - Zeile 981-982: Benachrichtigung nach Filesystem-Upload
-- `TestHelper.php`: Fix für `downloadMultiFeedbackZip()`
-  - Eigene Implementierung statt nicht-existierende ILIAS-Methode
-  - Erstellt korrekte ZIP-Struktur (`exc_teams_X/` oder `user_X/`)
-  - Unterstützt Teams und Individual Assignments
-
-### Behoben
-- **TestHelper.downloadMultiFeedbackZip() Fehler**
-  - Call to undefined method `ilExMultiFeedbackDownloadHandler::generateMultiFeedbackZip()`
-  - Lösung: Manuelle ZIP-Erstellung mit korrekter Struktur
 
 ### Sicherheit
-- Debug-Modus standardmäßig aktiviert (`DEBUG_EMAIL_NOTIFICATIONS = true`)
+- Debug-Modus standardmäßig aktiviert
 - Keine echten E-Mails während Tests/Entwicklung
 - Sicher für Deployment auf Produktionssystemen
 
@@ -116,16 +131,9 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   - CLI: `--parent-ref=123`
   - Web: Input-Feld für Parent RefID
 
-#### Dokumentation
-- `tests/integration/README.md` - Vollständige Test-Dokumentation
-- `tests/integration/QUICKSTART.md` - Schneller Einstieg
-- `tests/MANUAL_TEST_GUIDE.md` - Manuelle Test-Anleitung
-- `docs/ADMIN_GUIDE_TESTS.md` - Admin-Guide
-- `ki_infos/integration_tests.md` - Test-Übersicht
-
 ### Geändert
 - **Code-Cleanup**
-  - Entfernte übermäßige Debug-Logs (nur Info-Level für wichtige Events)
+  - Entfernte übermäßige Debug-Logs
   - Reduzierte Log-Verbosity im Produktiv-Betrieb
 
 ### Performance
@@ -159,23 +167,9 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## Geplante Features (Roadmap)
-
-### v1.3.0 (Optional)
-- [ ] Admin-UI für Debug-Modus Toggle
-- [ ] Notification-Statistiken Dashboard
-- [ ] Batch-Benachrichtigungen (optional)
-
-### Zukünftige Versionen
-- [ ] User-Preference UI für Notifications
-- [ ] Erweiterte Checksum-Optionen
-- [ ] CI/CD Integration für Tests
-
----
-
 ## Migration Notes
 
-### Von 1.1.0 zu 1.2.0
+### Von 1.2.0 zu 1.3.0
 
 **Breaking Changes:** Keine
 
@@ -185,31 +179,29 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 1. **Update durchführen:**
    ```bash
-   git pull origin main
+   git pull
    composer install
    php setup/setup.php update
    ```
 
-2. **Plugin aktivieren:**
+2. **Plugin aktualisieren:**
    - Administration → Plugins → UI Component Hook Plugins
-   - ExerciseStatusFile aktivieren (falls deaktiviert)
+   - ExerciseStatusFile → **Aktualisieren** klicken
+   - Danach erscheint "Konfigurieren" in den Aktionen
 
-3. **Tests ausführen (empfohlen):**
-   - In ILIAS: Übung öffnen → "Abgaben und Noten" → "🧪 Run Tests"
-   - Oder via Web: `tests/integration/web-runner.php`
-   - Erwartetes Ergebnis: 12/12 Tests bestanden
+3. **Debug-Modus prüfen:**
+   - ExerciseStatusFile → Aktionen → **Konfigurieren**
+   - Standard: Debug-Modus aktiviert (sicher)
+   - Bei Bedarf: Checkbox deaktivieren für Produktiv-Betrieb
 
-4. **Debug-Modus prüfen:**
-   - Datei: `classes/class.ilExerciseStatusFilePlugin.php`
-   - Zeile 17: `DEBUG_EMAIL_NOTIFICATIONS = true` (sollte `true` sein für sicheren Start)
+### Von 1.1.0 zu 1.2.0
 
-5. **Monitoring einrichten:**
-   - ILIAS-Logs überwachen: `tail -f /var/www/StudOn/data/studon/ilias.log | grep notification`
-   - Erste Woche: Tägliche Log-Prüfung
+**Breaking Changes:** Keine
 
-6. **Optional: Produktiv-Modus aktivieren (nach Tests):**
-   - Setze `DEBUG_EMAIL_NOTIFICATIONS = false`
-   - Opcode-Cache leeren: `service php8.2-fpm reload`
+**Empfohlene Schritte:**
+1. Plugin-Update durchführen
+2. Tests ausführen (Modal oder web-runner.php)
+3. Debug-Modus initial aktiv lassen
 
 ### Von 1.0.0 zu 1.1.0
 
@@ -218,13 +210,11 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 **Empfohlene Schritte:**
 1. Plugin-Update durchführen
 2. Tests ausführen (web-runner.php)
-3. Integration Tests dokumentieren
 
 ---
 
 ## Support
 
 Bei Fragen oder Problemen:
-- GitHub Issues: [Repository Issues](https://github.com/yourusername/ExerciseStatusFile/issues)
+- GitHub Issues
 - E-Mail: cornel.musielak@fau.de
-- Dokumentation: `README.md`, `tests/*.md`, `ki_infos/*.md`
