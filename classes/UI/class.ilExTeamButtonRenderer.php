@@ -1,8 +1,6 @@
 <?php
 declare(strict_types=1);
 
-use ILIAS\LegalDocuments\Internal;
-
 /**
  * Team Button Renderer
  * 
@@ -1448,17 +1446,13 @@ class ilExTeamButtonRenderer
     
     /**
      * Team-Button in ILIAS-Toolbar rendern
+     *
+     * Findet den LETZTEN Toolbar-Button vor dem Filter-Bereich
+     * und fügt danach ein - egal welcher Button das ist.
      */
     public function renderTeamButton(int $assignment_id): void
     {
         $btn_text = addslashes($this->plugin->txt('btn_multi_feedback'));
-
-        // ============================================================
-        // INSTANT BUTTON RENDERING - KANN LEICHT ENTFERNT WERDEN
-        // Ändere setTimeout(500) -> 0 für instant rendering
-        // Um zu revertieren: ändere zurück zu 500
-        // ============================================================
-        $instant_delay = 0;  // War: 500ms - Jetzt: 0ms (instant)
 
         $this->template->addOnLoadCode("
             setTimeout(function() {
@@ -1469,25 +1463,42 @@ class ilExTeamButtonRenderer
                     return;
                 }
 
-                var targetContainer = null;
-                var insertAfterElement = null;
+                // Finde den LETZTEN Toolbar-Button VOR Filter/Table/Footer
+                var allButtons = document.querySelectorAll('button.btn, input[type=\"submit\"].btn, input[type=\"button\"].btn');
+                var lastToolbarButton = null;
 
-                // Suche nach 'Download All Submissions' / 'Alle Abgaben herunterladen' Button
-                // ILIAS 9: Toolbar-Struktur geändert, suche breiter nach allen Buttons
-                var allElements = document.querySelectorAll('button, input[type=\"submit\"], input[type=\"button\"]');
+                for (var i = 0; i < allButtons.length; i++) {
+                    var btn = allButtons[i];
+                    var text = btn.value || btn.textContent || '';
 
-                for (var i = 0; i < allElements.length; i++) {
-                    var el = allElements[i];
-                    var text = el.value || el.textContent || '';
-                    // DE: 'Abgaben herunterladen', EN: 'Download Submissions/returned'
-                    if (text.includes('Abgaben') || text.includes('Submissions') || (text.includes('Download') && text.includes('returned'))) {
-                        targetContainer = el.parentNode;
-                        insertAfterElement = el;
+                    // Ignoriere Buttons in Navigation/Header/Dropdowns (skip, weitermachen)
+                    if (btn.closest('.il-mainbar, .il-metabar, header, nav, .dropdown-menu, .modal')) {
+                        continue;
+                    }
+
+                    // STOP-Bedingungen: Hier endet der Toolbar-Bereich
+                    // Filter-Buttons → Toolbar-Ende erreicht
+                    if (text.includes('Filter') || text.includes('Zurücksetzen') || text.includes('Ausführen')) {
                         break;
                     }
+                    // Table-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('table, .ilTableOuter, .ilTableFilterActivator, .ilTableNav')) {
+                        break;
+                    }
+                    // Footer-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('.ilFooter, #il_footer, footer, [class*=\"footer\"]')) {
+                        break;
+                    }
+                    // Clipboard/Link-Buttons (typisch Footer) → Toolbar-Ende erreicht
+                    if (text.includes('Zwischenablage') || text.includes('Link in')) {
+                        break;
+                    }
+
+                    // Gültiger Toolbar-Button gefunden
+                    lastToolbarButton = btn;
                 }
 
-                if (targetContainer) {
+                if (lastToolbarButton) {
                     var multiFeedbackBtn = document.createElement('button');
                     multiFeedbackBtn.id = 'exstatusfile-team-btn';
                     multiFeedbackBtn.type = 'button';
@@ -1499,67 +1510,81 @@ class ilExTeamButtonRenderer
                         window.ExerciseStatusFilePlugin.startTeamMultiFeedback($assignment_id);
                     };
 
-                    // Nach dem Download-Button einfügen
-                    if (insertAfterElement && insertAfterElement.nextSibling) {
-                        targetContainer.insertBefore(multiFeedbackBtn, insertAfterElement.nextSibling);
-                    } else {
-                        targetContainer.appendChild(multiFeedbackBtn);
-                    }
+                    lastToolbarButton.insertAdjacentElement('afterend', multiFeedbackBtn);
                 }
-            }, {$instant_delay});
+            }, 0);
         ");
     }
 
     /**
      * Individual-Button in ILIAS-Toolbar rendern
+     *
+     * Findet den LETZTEN Toolbar-Button VOR Filter/Table/Footer
+     * und fügt danach ein - stoppt bei Stop-Bedingungen.
      */
     public function renderIndividualButton(int $assignment_id): void
     {
         $btn_text = addslashes($this->plugin->txt('btn_multi_feedback'));
 
-        // ============================================================
-        // INSTANT BUTTON RENDERING - KANN LEICHT ENTFERNT WERDEN
-        // Ändere setTimeout(500) -> 0 für instant rendering
-        // Um zu revertieren: ändere zurück zu 500
-        // ============================================================
-        $instant_delay = 0;  // War: 500ms - Jetzt: 0ms (instant)
-
         $this->template->addOnLoadCode("
             setTimeout(function() {
                 window.ExerciseStatusFilePlugin.removeExistingPluginBox();
 
-                var targetContainer = null;
-                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+                // Duplikat-Prüfung
+                if (document.getElementById('exstatusfile-individual-btn')) {
+                    return;
+                }
+
+                // Finde den LETZTEN Toolbar-Button VOR Filter/Table/Footer
+                var allButtons = document.querySelectorAll('button.btn, input[type=\"submit\"].btn, input[type=\"button\"].btn');
+                var lastToolbarButton = null;
 
                 for (var i = 0; i < allButtons.length; i++) {
                     var btn = allButtons[i];
-                    if (btn.value && (btn.value.includes('herunterladen') || btn.value.includes('Download'))) {
-                        targetContainer = btn.parentNode;
+                    var text = btn.value || btn.textContent || '';
+
+                    // Ignoriere Buttons in Navigation/Header/Dropdowns (skip, weitermachen)
+                    if (btn.closest('.il-mainbar, .il-metabar, header, nav, .dropdown-menu, .modal')) {
+                        continue;
+                    }
+
+                    // STOP-Bedingungen: Hier endet der Toolbar-Bereich
+                    // Filter-Buttons → Toolbar-Ende erreicht
+                    if (text.includes('Filter') || text.includes('Zurücksetzen') || text.includes('Ausführen')) {
                         break;
                     }
+                    // Table-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('table, .ilTableOuter, .ilTableFilterActivator, .ilTableNav')) {
+                        break;
+                    }
+                    // Footer-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('.ilFooter, #il_footer, footer, [class*=\"footer\"]')) {
+                        break;
+                    }
+                    // Clipboard/Link-Buttons (typisch Footer) → Toolbar-Ende erreicht
+                    if (text.includes('Zwischenablage') || text.includes('Link in')) {
+                        break;
+                    }
+
+                    // Gültiger Toolbar-Button gefunden
+                    lastToolbarButton = btn;
                 }
 
-                if (targetContainer) {
-                    var multiFeedbackBtn = document.createElement('input');
+                if (lastToolbarButton) {
+                    var multiFeedbackBtn = document.createElement('button');
+                    multiFeedbackBtn.id = 'exstatusfile-individual-btn';
                     multiFeedbackBtn.type = 'button';
-                    multiFeedbackBtn.value = '{$btn_text}';
-                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
+                    multiFeedbackBtn.textContent = '{$btn_text}';
+                    multiFeedbackBtn.className = 'btn btn-default';
+                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586;';
 
-                    var existingButton = targetContainer.querySelector('input[type=\"submit\"], input[type=\"button\"]');
-                    if (existingButton && existingButton.className) {
-                        multiFeedbackBtn.className = existingButton.className;
-                        multiFeedbackBtn.style.background = '#4c6586';
-                        multiFeedbackBtn.style.borderColor = '#4c6586';
-                        multiFeedbackBtn.style.color = 'white';
-                    }
-                    
                     multiFeedbackBtn.onclick = function() {
                         window.ExerciseStatusFilePlugin.startIndividualMultiFeedback($assignment_id);
                     };
 
-                    targetContainer.appendChild(multiFeedbackBtn);
+                    lastToolbarButton.insertAdjacentElement('afterend', multiFeedbackBtn);
                 }
-            }, {$instant_delay});
+            }, 0);
         ");
     }
     
@@ -1646,30 +1671,36 @@ class ilExTeamButtonRenderer
 
         $this->template->addOnLoadCode("
             setTimeout(function() {
-                // Check if button already exists
-                if (document.querySelector('input[value=\"🧪 Run Tests\"]')) {
-                    return; // Already rendered
+                // Duplikat-Prüfung
+                if (document.getElementById('exstatusfile-test-btn')) {
+                    return;
                 }
 
-                // Find the target container (same as Multi-Feedback button)
-                var targetContainer = null;
-                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+                // Suche nach Multi-Feedback Button als Referenz (wurde gerade eingefügt)
+                var referenceButton = document.getElementById('exstatusfile-individual-btn') || document.getElementById('exstatusfile-team-btn');
 
-                for (var i = 0; i < allButtons.length; i++) {
-                    var btn = allButtons[i];
-                    if (btn.value && (btn.value.includes('Einzelteams') || btn.value.includes('herunterladen') || btn.value.includes('Multi-Feedback'))) {
-                        targetContainer = btn.parentNode;
-                        break;
+                // Fallback: Suche nach anderen Buttons
+                if (!referenceButton) {
+                    var allElements = document.querySelectorAll('button, input[type=\"submit\"], input[type=\"button\"]');
+                    for (var i = 0; i < allElements.length; i++) {
+                        var el = allElements[i];
+                        var text = el.value || el.textContent || '';
+                        if (text.includes('suchen') || text.includes('Search') || text.includes('herunterladen') || text.includes('Download')) {
+                            referenceButton = el;
+                            break;
+                        }
                     }
                 }
 
-                if (targetContainer) {
+                if (referenceButton) {
                     // Create test button
-                    var testBtn = document.createElement('input');
+                    var testBtn = document.createElement('button');
+                    testBtn.id = 'exstatusfile-test-btn';
                     testBtn.type = 'button';
-                    testBtn.value = '🧪 Run Tests';
+                    testBtn.textContent = '🧪 Run Tests';
                     testBtn.title = 'Run Integration Tests (Admin only)';
-                    testBtn.style.cssText = 'margin-left: 10px; background: #ffc107; color: #000; border: 1px solid #ffc107; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-weight: bold;';
+                    testBtn.className = 'btn btn-default';
+                    testBtn.style.cssText = 'margin-left: 10px; background: #ffc107; color: #000; border: 1px solid #ffc107;';
 
                     testBtn.onclick = function() {
                         // Create modal with options
@@ -1918,10 +1949,10 @@ class ilExTeamButtonRenderer
                         };
                     };
 
-                    targetContainer.appendChild(testBtn);
+                    // Sicher nach dem Referenz-Button einfügen
+                    referenceButton.insertAdjacentElement('afterend', testBtn);
                 }
             }, 100); // Small delay to ensure Multi-Feedback button is rendered first
         ");
     }
 }
-?>
