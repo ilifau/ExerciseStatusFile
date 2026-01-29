@@ -191,34 +191,55 @@ class ilExFeedbackUploadHandler
         $status_files_found = [];
         $has_team_structure = false;
         $has_user_structure = false;
-        
+        $zip_assignment_ids = [];
+
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $filename = $zip->getNameIndex($i);
             $file_list[] = $filename;
-            
+
             $basename = basename($filename);
             $status_file_patterns = [
                 'status.xlsx', 'status.csv', 'status.xls',
                 'batch_status.xlsx', 'batch_status.csv'
             ];
-            
+
             foreach ($status_file_patterns as $pattern) {
                 if (strcasecmp($basename, $pattern) === 0) {
                     $status_files_found[] = $filename;
                     break;
                 }
             }
-            
+
             if (preg_match('/Team_\d+\//', $filename)) {
                 $has_team_structure = true;
             }
-            
+
             if (preg_match('/[^\/]+_[^\/]+_[^\/]+_\d+\//', $filename)) {
                 $has_user_structure = true;
             }
+
+            // Extract assignment ID from folder structure
+            // Pattern: Multi_Feedback_Individual_*_XXX/ or Multi_Feedback_Team_*_XXX/
+            if (preg_match('/Multi_Feedback_(?:Individual|Team)_[^_]+_(\d+)\//', $filename, $matches)) {
+                $zip_assignment_ids[(int)$matches[1]] = true;
+            }
         }
-        
+
         $zip->close();
+
+        // Validate assignment ID matches ZIP content
+        if (!empty($zip_assignment_ids)) {
+            $found_ids = array_keys($zip_assignment_ids);
+            if (!in_array($assignment_id, $found_ids)) {
+                $found_ids_str = implode(', ', $found_ids);
+                $this->logger->error("Assignment ID mismatch: ZIP contains assignment(s) $found_ids_str but upload targets assignment $assignment_id");
+                throw new Exception(
+                    "Falsches Assignment: Das ZIP-Archiv wurde für Assignment $found_ids_str erstellt, " .
+                    "aber Sie versuchen es zu Assignment $assignment_id hochzuladen. " .
+                    "Bitte laden Sie das ZIP zur korrekten Übungseinheit hoch."
+                );
+            }
+        }
 
         // Validierungen
         // Status-Datei ist optional - Feedback kann auch ohne Status-Updates hochgeladen werden
@@ -408,26 +429,12 @@ class ilExFeedbackUploadHandler
 
         // Keine Status-Files gefunden
         if (!$xlsx_file && !$csv_file) {
-            $this->logger->info("findStatusFiles: No status.xlsx or status.csv found in ZIP");
             return [];
         }
 
-        $this->logger->info("findStatusFiles: Found xlsx=" . ($xlsx_file ? 'yes' : 'no') .
-            ", csv=" . ($csv_file ? 'yes' : 'no'));
-
-        // NEUE LOGIK: Zähle update=1 Zeilen in jeder Datei
-        $xlsx_updates = 0;
-        $csv_updates = 0;
-
-        if ($xlsx_file) {
-            $xlsx_updates = $this->countUpdateRows($xlsx_file['extracted_path']);
-            $this->logger->info("findStatusFiles: status.xlsx has $xlsx_updates update=1 rows");
-        }
-
-        if ($csv_file) {
-            $csv_updates = $this->countUpdateRows($csv_file['extracted_path']);
-            $this->logger->info("findStatusFiles: status.csv has $csv_updates update=1 rows");
-        }
+        // Content-basierte Datei-Auswahl: Zähle update=1 Zeilen in jeder Datei
+        $xlsx_updates = $xlsx_file ? $this->countUpdateRows($xlsx_file['extracted_path']) : 0;
+        $csv_updates = $csv_file ? $this->countUpdateRows($csv_file['extracted_path']) : 0;
 
         // Entscheidungslogik basierend auf tatsächlichen Updates
         $xlsx_has_updates = ($xlsx_updates > 0);
@@ -435,39 +442,29 @@ class ilExFeedbackUploadHandler
 
         if ($xlsx_has_updates && $csv_has_updates) {
             // BEIDE haben Updates -> xlsx verwenden aber Warnung
-            $this->logger->warning(
-                "Both status.xlsx ($xlsx_updates rows) and status.csv ($csv_updates rows) have updates. " .
-                "Using status.xlsx. Please modify only ONE status file per upload."
-            );
             $this->showUserWarning(
                 "Hinweis: Sowohl status.xlsx ($xlsx_updates Zeilen) als auch status.csv ($csv_updates Zeilen) " .
                 "enthalten Updates. Es wird status.xlsx verwendet. " .
                 "Bitte ändern Sie nur EINE Status-Datei pro Upload."
             );
-            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (both have updates, xlsx preferred)");
+            $this->logger->info("findStatusFiles: Both files have updates (xlsx=$xlsx_updates, csv=$csv_updates), using xlsx");
             return [$xlsx_file['extracted_path']];
 
         } elseif ($xlsx_has_updates) {
             // Nur xlsx hat Updates
-            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (only xlsx has $xlsx_updates updates)");
+            $this->logger->info("findStatusFiles: Using status.xlsx ($xlsx_updates updates)");
             return [$xlsx_file['extracted_path']];
 
         } elseif ($csv_has_updates) {
             // Nur csv hat Updates
-            $this->logger->info("findStatusFiles: DECISION -> using status.csv (only csv has $csv_updates updates)");
+            $this->logger->info("findStatusFiles: Using status.csv ($csv_updates updates)");
             return [$csv_file['extracted_path']];
 
         } else {
-            // Keine Datei hat Updates
-            $this->logger->info("findStatusFiles: No updates found in either file (xlsx=$xlsx_updates, csv=$csv_updates)");
-
-            // Fallback: Prüfe ob überhaupt eine Status-Datei vorhanden ist
-            // und gib sie zurück (für mögliche andere Verarbeitung)
+            // Keine Datei hat Updates - Fallback auf vorhandene Datei
             if ($xlsx_file) {
-                $this->logger->info("findStatusFiles: DECISION -> returning status.xlsx (no updates, but file exists)");
                 return [$xlsx_file['extracted_path']];
             } elseif ($csv_file) {
-                $this->logger->info("findStatusFiles: DECISION -> returning status.csv (no updates, but file exists)");
                 return [$csv_file['extracted_path']];
             }
         }
@@ -561,6 +558,7 @@ class ilExFeedbackUploadHandler
     {
         $handle = fopen($filepath, 'r');
         if (!$handle) {
+            $this->logger->error("countUpdateRowsInCsv: Cannot open file $filepath");
             return -1;
         }
 
@@ -643,7 +641,6 @@ class ilExFeedbackUploadHandler
                 $updateCount++;
             }
         }
-
         return $updateCount;
     }
 

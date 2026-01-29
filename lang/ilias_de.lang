@@ -87,6 +87,7 @@ error_multi_feedback_download#:#Fehler beim Multi-Feedback-Download
 error_multi_feedback_upload#:#Fehler beim Multi-Feedback-Upload
 error_invalid_zip#:#Die hochgeladene Datei ist kein gültiges ZIP-Archiv
 error_zip_empty#:#Das ZIP-Archiv ist leer
+error_assignment_mismatch#:#Falsches Assignment: Das ZIP-Archiv wurde für ein anderes Assignment erstellt. Bitte laden Sie das ZIP zur korrekten Übungseinheit hoch.
 error_no_status_files#:#Keine Status-Dateien im ZIP gefunden
 error_team_structure_required#:#Team-Assignment benötigt Team-Ordner
 error_individual_structure_forbidden#:#Individual-Assignment darf keine Team-Ordner enthalten
