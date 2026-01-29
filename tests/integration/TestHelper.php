@@ -625,6 +625,169 @@ class IntegrationTestHelper
     }
 
     /**
+     * Modifies BOTH status files (xlsx and csv) in a ZIP for content-based selection tests
+     *
+     * Allows setting different update configurations for each file to test which file gets selected
+     *
+     * @param string $zip_path Path to the ZIP file
+     * @param array $csv_updates Array of user_ids to set update=1 in CSV (empty = all stay 0)
+     * @param array $xlsx_updates Array of user_ids to set update=1 in XLSX (empty = all stay 0)
+     * @param array $status_override Optional status to set for updated users
+     * @return string Path to the modified ZIP
+     */
+    public function modifyBothStatusFilesInZip(
+        string $zip_path,
+        array $csv_updates = [],
+        array $xlsx_updates = [],
+        array $status_override = []
+    ): string {
+        $extract_dir = sys_get_temp_dir() . '/test_both_status_' . uniqid();
+        mkdir($extract_dir, 0777, true);
+
+        // Extract ZIP
+        $zip = new ZipArchive();
+        if ($zip->open($zip_path) !== true) {
+            throw new Exception("Failed to open ZIP: $zip_path");
+        }
+        $zip->extractTo($extract_dir);
+        $zip->close();
+
+        $csv_file = $extract_dir . '/status.csv';
+        $xlsx_file = $extract_dir . '/status.xlsx';
+
+        // Modify CSV
+        if (file_exists($csv_file)) {
+            $this->modifyStatusFileWithUpdates($csv_file, 'csv', $csv_updates, $status_override);
+        }
+
+        // Modify XLSX (create simple xlsx with PhpSpreadsheet if available, otherwise skip)
+        if (file_exists($xlsx_file) && class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            $this->modifyStatusFileWithUpdates($xlsx_file, 'xlsx', $xlsx_updates, $status_override);
+        }
+
+        // Create new ZIP
+        $new_zip_path = sys_get_temp_dir() . '/test_both_status_modified_' . uniqid() . '.zip';
+        $this->createZipFromDirectory($extract_dir, $new_zip_path);
+
+        // Cleanup extract dir
+        $this->rmdirRecursive($extract_dir);
+
+        return $new_zip_path;
+    }
+
+    /**
+     * Helper: Modifies a status file (csv or xlsx) setting update=1 for specific user_ids
+     */
+    private function modifyStatusFileWithUpdates(
+        string $filepath,
+        string $type,
+        array $user_ids_to_update,
+        array $status_override = []
+    ): void {
+        if ($type === 'csv') {
+            // Read CSV
+            $file_content = file_get_contents($filepath);
+            $lines = explode("\n", $file_content);
+
+            if (empty($lines)) {
+                return;
+            }
+
+            // Parse header
+            $header_line = array_shift($lines);
+            $delimiter = (substr_count($header_line, ';') > substr_count($header_line, ',')) ? ';' : ',';
+            $headers = str_getcsv($header_line, $delimiter);
+
+            // Find column indices
+            $update_idx = array_search('update', array_map('strtolower', $headers));
+            $usr_id_idx = array_search('usr_id', array_map('strtolower', $headers));
+            $status_idx = array_search('status', array_map('strtolower', $headers));
+
+            if ($update_idx === false || $usr_id_idx === false) {
+                return;
+            }
+
+            // Modify rows
+            $new_lines = [$header_line];
+            foreach ($lines as $line) {
+                if (trim($line) === '') {
+                    continue;
+                }
+
+                $row = str_getcsv($line, $delimiter);
+                if (count($row) < count($headers)) {
+                    $row = array_pad($row, count($headers), '');
+                }
+
+                $user_id = (int)($row[$usr_id_idx] ?? 0);
+
+                // Set update flag based on whether user_id is in the update list
+                $row[$update_idx] = in_array($user_id, $user_ids_to_update) ? '1' : '0';
+
+                // Apply status override if user is being updated
+                if (in_array($user_id, $user_ids_to_update) && isset($status_override['status']) && $status_idx !== false) {
+                    $row[$status_idx] = $status_override['status'];
+                }
+
+                $new_lines[] = implode($delimiter, $row);
+            }
+
+            file_put_contents($filepath, implode("\n", $new_lines));
+
+        } elseif ($type === 'xlsx' && class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            try {
+                $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($filepath);
+                $spreadsheet = $reader->load($filepath);
+                $sheet = $spreadsheet->getActiveSheet();
+
+                $highestRow = $sheet->getHighestRow();
+                $highestColumn = $sheet->getHighestColumn();
+
+                // Find column indices from header row
+                $headerRow = $sheet->rangeToArray('A1:' . $highestColumn . '1', null, true, false)[0];
+                $update_col = null;
+                $usr_id_col = null;
+                $status_col = null;
+
+                foreach ($headerRow as $i => $col) {
+                    $col_lower = strtolower(trim((string)$col));
+                    if ($col_lower === 'update') {
+                        $update_col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                    } elseif ($col_lower === 'usr_id') {
+                        $usr_id_col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                    } elseif ($col_lower === 'status') {
+                        $status_col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                    }
+                }
+
+                if ($update_col === null || $usr_id_col === null) {
+                    return;
+                }
+
+                // Modify rows
+                for ($row = 2; $row <= $highestRow; $row++) {
+                    $user_id = (int)$sheet->getCell($usr_id_col . $row)->getValue();
+
+                    // Set update flag
+                    $sheet->setCellValue($update_col . $row, in_array($user_id, $user_ids_to_update) ? 1 : 0);
+
+                    // Apply status override
+                    if (in_array($user_id, $user_ids_to_update) && isset($status_override['status']) && $status_col !== null) {
+                        $sheet->setCellValue($status_col . $row, $status_override['status']);
+                    }
+                }
+
+                // Save
+                $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
+                $writer->save($filepath);
+
+            } catch (\Exception $e) {
+                $this->debugLog("XLSX modification failed: " . $e->getMessage());
+            }
+        }
+    }
+
+    /**
      * Get debug info from last CSV modification
      */
     public function getLastCsvDebug(): array

@@ -275,6 +275,12 @@ class ilExTeamMultiFeedbackDownloadHandler extends ilExMultiFeedbackDownloadHand
                    "   " . $this->plugin->txt('readme_workflow_step2_example') . "\n" .
                "3. **" . $this->plugin->txt('readme_workflow_step3') . ":** " . $this->plugin->txt('readme_workflow_step3_desc') .
                    " Feedback-Dateien werden automatisch verarbeitet.\n\n" .
+               "## " . $this->plugin->txt('readme_file_selection_section') . "\n\n" .
+               $this->plugin->txt('readme_file_selection_info') . "\n\n" .
+               "- " . $this->plugin->txt('readme_file_selection_csv_only') . "\n" .
+               "- " . $this->plugin->txt('readme_file_selection_xlsx_only') . "\n" .
+               "- " . $this->plugin->txt('readme_file_selection_both') . "\n\n" .
+               "💡 **" . $this->plugin->txt('readme_file_selection_tip') . "**\n\n" .
                "## " . $this->plugin->txt('readme_modified_submission_section') . "\n\n" .
                $this->plugin->txt('readme_modified_submission_info') . "\n\n" .
                $this->plugin->txt('readme_modified_submission_recommendation') . "\n\n" .
@@ -307,7 +313,13 @@ class ilExTeamMultiFeedbackDownloadHandler extends ilExMultiFeedbackDownloadHand
                "## Workflow\n\n" .
                "1. **Edit status:** Open `status.xlsx` or `status.csv`. Set `update` to `1` for rows that should be updated.\n" .
                "2. **Add feedback:** Place feedback files in the corresponding user folders.\n" .
-               "3. **Re-upload:** Upload the complete ZIP again.\n\n";
+               "3. **Re-upload:** Upload the complete ZIP again.\n\n" .
+               "## File Selection (xlsx vs. csv)\n\n" .
+               "The system automatically detects which status file you edited:\n\n" .
+               "- Only status.csv has updates → CSV is used\n" .
+               "- Only status.xlsx has updates → XLSX is used\n" .
+               "- Both have updates → XLSX is preferred\n\n" .
+               "💡 **Tip: Edit only ONE file (xlsx OR csv), not both!**\n\n";
     }
 
     /**

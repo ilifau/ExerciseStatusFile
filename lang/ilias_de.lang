@@ -187,6 +187,14 @@ upload_modified_submissions_renamed#:#veränderte Submission(s) wurden automatis
 upload_renamed_file_list#:#Umbenannte Dateien
 upload_modified_submission_hint#:#Hinweis: Veränderte Submissions wurden automatisch umbenannt, um sie als Feedback erkennbar zu machen. Bitte prüfen Sie die hochgeladenen Dateien.
 
+<!-- File Selection / Datei-Auswahl -->
+readme_file_selection_section#:#Datei-Auswahl (xlsx vs. csv)
+readme_file_selection_info#:#Das System erkennt automatisch, welche Status-Datei Sie bearbeitet haben, basierend auf den `update=1` Einträgen:
+readme_file_selection_csv_only#:#Enthält nur status.csv Updates → CSV wird verwendet
+readme_file_selection_xlsx_only#:#Enthält nur status.xlsx Updates → XLSX wird verwendet
+readme_file_selection_both#:#Beide haben Updates → XLSX wird bevorzugt
+readme_file_selection_tip#:#Tipp: Bearbeiten Sie nur EINE Datei (xlsx ODER csv), nicht beide gleichzeitig!
+
 <!-- Plugin Configuration -->
 plugin_configuration#:#Plugin-Konfiguration
 config_section_notifications#:#E-Mail-Benachrichtigungen

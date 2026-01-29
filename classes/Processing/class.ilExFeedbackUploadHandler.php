@@ -379,14 +379,15 @@ class ilExFeedbackUploadHandler
     /**
      * Findet Status-Files im entpackten ZIP mit intelligenter Auswahl
      *
-     * Logik:
-     * - Wenn nur status.xlsx geändert wurde -> verwende xlsx
-     * - Wenn nur status.csv geändert wurde -> verwende csv
-     * - Wenn beide geändert wurden -> verwende xlsx und zeige Warnung
-     * - Wenn keine geändert wurde -> verwende xlsx (falls vorhanden)
+     * NEUE Logik (Content-basiert):
+     * - Prüft in beiden Dateien wie viele Zeilen update=1 haben
+     * - Wenn nur xlsx Updates hat -> verwende xlsx
+     * - Wenn nur csv Updates hat -> verwende csv
+     * - Wenn beide Updates haben -> verwende xlsx und zeige Warnung
+     * - Wenn keine Updates hat -> zeige Hinweis, keine Verarbeitung
      *
      * @param array $extracted_files Die extrahierten Dateien
-     * @param array $checksums Checksums aus checksums.json
+     * @param array $checksums Checksums aus checksums.json (nicht mehr primär verwendet)
      * @return array Liste der zu verarbeitenden Status-Files (immer max. 1 File)
      */
     private function findStatusFiles(array $extracted_files, array $checksums): array
@@ -411,58 +412,62 @@ class ilExFeedbackUploadHandler
             return [];
         }
 
-        // Prüfe ob Checksums für Status-Dateien vorhanden sind
-        $has_xlsx_checksum = isset($checksums['status.xlsx']);
-        $has_csv_checksum = isset($checksums['status.csv']);
-
         $this->logger->info("findStatusFiles: Found xlsx=" . ($xlsx_file ? 'yes' : 'no') .
-            ", csv=" . ($csv_file ? 'yes' : 'no') .
-            ", xlsx_checksum=" . ($has_xlsx_checksum ? 'yes' : 'no') .
-            ", csv_checksum=" . ($has_csv_checksum ? 'yes' : 'no'));
+            ", csv=" . ($csv_file ? 'yes' : 'no'));
 
-        // Prüfe welche Datei(en) geändert wurden
-        $xlsx_modified = false;
-        $csv_modified = false;
+        // NEUE LOGIK: Zähle update=1 Zeilen in jeder Datei
+        $xlsx_updates = 0;
+        $csv_updates = 0;
 
-        if ($xlsx_file && !empty($checksums)) {
-            $xlsx_modified = $this->isFileModified($xlsx_file, $checksums);
+        if ($xlsx_file) {
+            $xlsx_updates = $this->countUpdateRows($xlsx_file['extracted_path']);
+            $this->logger->info("findStatusFiles: status.xlsx has $xlsx_updates update=1 rows");
         }
 
-        if ($csv_file && !empty($checksums)) {
-            $csv_modified = $this->isFileModified($csv_file, $checksums);
+        if ($csv_file) {
+            $csv_updates = $this->countUpdateRows($csv_file['extracted_path']);
+            $this->logger->info("findStatusFiles: status.csv has $csv_updates update=1 rows");
         }
 
-        $this->logger->info("findStatusFiles: xlsx_modified=" . ($xlsx_modified ? 'true' : 'false') .
-            ", csv_modified=" . ($csv_modified ? 'true' : 'false'));
+        // Entscheidungslogik basierend auf tatsächlichen Updates
+        $xlsx_has_updates = ($xlsx_updates > 0);
+        $csv_has_updates = ($csv_updates > 0);
 
-        // Entscheidungslogik
-        if ($xlsx_modified && $csv_modified) {
-            // BEIDE geändert -> xlsx verwenden aber Warnung
+        if ($xlsx_has_updates && $csv_has_updates) {
+            // BEIDE haben Updates -> xlsx verwenden aber Warnung
             $this->logger->warning(
-                "Both status.xlsx and status.csv were modified. Using status.xlsx. " .
-                "Please modify only ONE status file per upload."
+                "Both status.xlsx ($xlsx_updates rows) and status.csv ($csv_updates rows) have updates. " .
+                "Using status.xlsx. Please modify only ONE status file per upload."
             );
-            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (both modified, xlsx preferred)");
+            $this->showUserWarning(
+                "Hinweis: Sowohl status.xlsx ($xlsx_updates Zeilen) als auch status.csv ($csv_updates Zeilen) " .
+                "enthalten Updates. Es wird status.xlsx verwendet. " .
+                "Bitte ändern Sie nur EINE Status-Datei pro Upload."
+            );
+            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (both have updates, xlsx preferred)");
             return [$xlsx_file['extracted_path']];
 
-        } elseif ($xlsx_modified) {
-            // Nur xlsx geändert
-            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (only xlsx modified)");
+        } elseif ($xlsx_has_updates) {
+            // Nur xlsx hat Updates
+            $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (only xlsx has $xlsx_updates updates)");
             return [$xlsx_file['extracted_path']];
 
-        } elseif ($csv_modified) {
-            // Nur csv geändert
-            $this->logger->info("findStatusFiles: DECISION -> using status.csv (only csv modified)");
+        } elseif ($csv_has_updates) {
+            // Nur csv hat Updates
+            $this->logger->info("findStatusFiles: DECISION -> using status.csv (only csv has $csv_updates updates)");
             return [$csv_file['extracted_path']];
 
         } else {
-            // Keine Änderungen erkannt - Fallback
-            $this->logger->info("findStatusFiles: No modifications detected, using fallback");
+            // Keine Datei hat Updates
+            $this->logger->info("findStatusFiles: No updates found in either file (xlsx=$xlsx_updates, csv=$csv_updates)");
+
+            // Fallback: Prüfe ob überhaupt eine Status-Datei vorhanden ist
+            // und gib sie zurück (für mögliche andere Verarbeitung)
             if ($xlsx_file) {
-                $this->logger->info("findStatusFiles: DECISION -> using status.xlsx (fallback)");
+                $this->logger->info("findStatusFiles: DECISION -> returning status.xlsx (no updates, but file exists)");
                 return [$xlsx_file['extracted_path']];
             } elseif ($csv_file) {
-                $this->logger->info("findStatusFiles: DECISION -> using status.csv (fallback)");
+                $this->logger->info("findStatusFiles: DECISION -> returning status.csv (no updates, but file exists)");
                 return [$csv_file['extracted_path']];
             }
         }
@@ -471,15 +476,11 @@ class ilExFeedbackUploadHandler
     }
 
     /**
-     * Prüft ob beide Status-Dateien unverändert sind und zeigt Warnung
+     * Prüft ob beide Status-Dateien keine Updates enthalten und zeigt Warnung
+     * (Content-basierte Prüfung statt Checksum)
      */
     private function checkForUnmodifiedStatusFiles(array $extracted_files, array $checksums): void
     {
-        // Nur prüfen wenn Checksums vorhanden sind
-        if (empty($checksums) || !isset($checksums['status.xlsx']) || !isset($checksums['status.csv'])) {
-            return;
-        }
-
         $xlsx_file = null;
         $csv_file = null;
 
@@ -492,12 +493,20 @@ class ilExFeedbackUploadHandler
             }
         }
 
-        // Prüfe ob BEIDE unverändert sind
-        $xlsx_unchanged = $xlsx_file && !$this->isFileModified($xlsx_file, $checksums);
-        $csv_unchanged = $csv_file && !$this->isFileModified($csv_file, $checksums);
+        // Keine Status-Dateien vorhanden
+        if (!$xlsx_file && !$csv_file) {
+            return;
+        }
 
-        if ($xlsx_unchanged && $csv_unchanged) {
-            $this->showUserWarning("Hinweis: Weder status.xlsx noch status.csv wurden geändert. Wenn Sie Status-Updates vornehmen möchten, bearbeiten Sie bitte eine der beiden Dateien.");
+        // Prüfe ob BEIDE keine Updates haben (content-basiert)
+        $xlsx_updates = $xlsx_file ? $this->countUpdateRows($xlsx_file['extracted_path']) : 0;
+        $csv_updates = $csv_file ? $this->countUpdateRows($csv_file['extracted_path']) : 0;
+
+        if ($xlsx_updates === 0 && $csv_updates === 0) {
+            $this->showUserWarning(
+                "Hinweis: Weder status.xlsx noch status.csv enthalten Zeilen mit update=1. " .
+                "Wenn Sie Status-Updates vornehmen möchten, setzen Sie bitte in der update-Spalte den Wert 1 für die zu aktualisierenden Zeilen."
+            );
         }
     }
 
@@ -515,6 +524,127 @@ class ilExFeedbackUploadHandler
     public function getWarnings(): array
     {
         return $this->warnings;
+    }
+
+    /**
+     * Zählt die Anzahl der Zeilen mit update=1 in einer Status-Datei (xlsx oder csv)
+     *
+     * @param string $filepath Pfad zur Status-Datei
+     * @return int Anzahl der Zeilen mit update=1, oder -1 bei Fehler
+     */
+    private function countUpdateRows(string $filepath): int
+    {
+        if (!file_exists($filepath)) {
+            return -1;
+        }
+
+        try {
+            $ext = strtolower(pathinfo($filepath, PATHINFO_EXTENSION));
+
+            if ($ext === 'csv') {
+                // CSV-Datei: Manuelles Parsing für bessere Performance
+                return $this->countUpdateRowsInCsv($filepath);
+            } else {
+                // XLSX-Datei: Mit PhpSpreadsheet
+                return $this->countUpdateRowsInXlsx($filepath);
+            }
+        } catch (\Exception $e) {
+            $this->logger->warning("countUpdateRows($filepath): Error - " . $e->getMessage());
+            return -1;
+        }
+    }
+
+    /**
+     * Zählt update=1 Zeilen in einer CSV-Datei
+     */
+    private function countUpdateRowsInCsv(string $filepath): int
+    {
+        $handle = fopen($filepath, 'r');
+        if (!$handle) {
+            return -1;
+        }
+
+        // Erste Zeile lesen für Delimiter-Erkennung
+        $firstLine = fgets($handle);
+        rewind($handle);
+
+        // Delimiter erkennen
+        $commaCount = substr_count($firstLine, ',');
+        $semicolonCount = substr_count($firstLine, ';');
+        $delimiter = ($semicolonCount > $commaCount) ? ';' : ',';
+
+        $updateCount = 0;
+        $updateColIndex = -1;
+        $isHeader = true;
+
+        while (($row = fgetcsv($handle, 0, $delimiter, '"')) !== false) {
+            if ($isHeader) {
+                // Header-Zeile: Finde update-Spalte
+                foreach ($row as $i => $col) {
+                    if (strtolower(trim($col)) === 'update') {
+                        $updateColIndex = $i;
+                        break;
+                    }
+                }
+                $isHeader = false;
+                continue;
+            }
+
+            // Daten-Zeile: Prüfe update-Wert
+            if ($updateColIndex >= 0 && isset($row[$updateColIndex])) {
+                $updateVal = trim($row[$updateColIndex]);
+                if ($updateVal === '1' || strtolower($updateVal) === 'true' || strtolower($updateVal) === 'yes') {
+                    $updateCount++;
+                }
+            }
+        }
+
+        fclose($handle);
+        return $updateCount;
+    }
+
+    /**
+     * Zählt update=1 Zeilen in einer XLSX-Datei
+     */
+    private function countUpdateRowsInXlsx(string $filepath): int
+    {
+        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($filepath);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($filepath);
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $highestRow = $sheet->getHighestRow();
+        $highestColumn = $sheet->getHighestColumn();
+
+        // Header lesen und update-Spalte finden
+        $updateColIndex = -1;
+        $headerRow = $sheet->rangeToArray('A1:' . $highestColumn . '1', null, true, false)[0];
+
+        foreach ($headerRow as $i => $col) {
+            if (strtolower(trim((string)$col)) === 'update') {
+                $updateColIndex = $i;
+                break;
+            }
+        }
+
+        if ($updateColIndex < 0) {
+            return 0; // Keine update-Spalte gefunden
+        }
+
+        // Spalten-Buchstabe ermitteln
+        $updateColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($updateColIndex + 1);
+
+        $updateCount = 0;
+        for ($row = 2; $row <= $highestRow; $row++) {
+            $cellValue = $sheet->getCell($updateColLetter . $row)->getValue();
+            $updateVal = strtolower(trim((string)$cellValue));
+
+            if ($updateVal === '1' || $updateVal === 'true' || $updateVal === 'yes') {
+                $updateCount++;
+            }
+        }
+
+        return $updateCount;
     }
 
     /**

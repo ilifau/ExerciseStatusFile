@@ -60,7 +60,14 @@ class ilPluginExAssignmentStatusFile extends ilExcel
         $this->updates = [];
         try {
             if (file_exists($filename)) {
-                $this->workbook = IOFactory::load($filename);
+                // Für CSV-Dateien: Auto-detect Delimiter (Komma oder Semikolon)
+                $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+                if ($ext === 'csv') {
+                    $this->workbook = $this->loadCsvWithAutoDelimiter($filename);
+                } else {
+                    $this->workbook = IOFactory::load($filename);
+                }
+
                 if ($this->assignment->getAssignmentType()->usesTeams()) {
                     $this->loadTeamSheet();
                 }
@@ -78,6 +85,34 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             $this->loadfromfile_success = false;
             return;
         }
+    }
+
+    /**
+     * CSV mit Auto-Detection des Delimiters laden
+     * Unterstützt Komma und Semikolon
+     */
+    private function loadCsvWithAutoDelimiter(string $filename): \PhpOffice\PhpSpreadsheet\Spreadsheet {
+        // Erste Zeile lesen um Delimiter zu erkennen
+        $firstLine = '';
+        $handle = fopen($filename, 'r');
+        if ($handle) {
+            $firstLine = fgets($handle);
+            fclose($handle);
+        }
+
+        // Delimiter erkennen: Zähle Vorkommen
+        $commaCount = substr_count($firstLine, ',');
+        $semicolonCount = substr_count($firstLine, ';');
+
+        $delimiter = ($semicolonCount > $commaCount) ? ';' : ',';
+
+        // CSV Reader mit erkanntem Delimiter konfigurieren
+        $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
+        $reader->setDelimiter($delimiter);
+        $reader->setEnclosure('"');
+        $reader->setInputEncoding('UTF-8');
+
+        return $reader->load($filename);
     }
 
     public function isWriteToFileSuccess(): bool {
@@ -216,8 +251,18 @@ class ilPluginExAssignmentStatusFile extends ilExcel
     protected function loadMemberSheet() {
         $sheet = $this->getSheetAsArray();
 
+        // DEBUG: Log sheet data
+        $debug_log = "loadMemberSheet DEBUG:\n";
+        $debug_log .= "- Sheet rows: " . count($sheet) . "\n";
+        $debug_log .= "- Members loaded: " . count($this->members) . "\n";
+
         $titles = array_shift($sheet);
+        $debug_log .= "- Titles from file: " . json_encode($titles) . "\n";
+        $debug_log .= "- Expected titles: " . json_encode($this->member_titles) . "\n";
+
         if (count(array_diff($this->member_titles, (array) $titles)) > 0) {
+            $debug_log .= "- TITLE MISMATCH! Diff: " . json_encode(array_diff($this->member_titles, (array) $titles)) . "\n";
+            ilLoggerFactory::getLogger('exc')->warning($debug_log);
             throw new ilExerciseException("Status file has wrong column titles");
         }
 
@@ -233,6 +278,14 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             }
             return false;
         });
+
+        $debug_log .= "- Non-empty rows: " . count($sheet) . "\n";
+
+        // DEBUG counters
+        $skip_no_userid = 0;
+        $skip_no_update = 0;
+        $skip_not_member = 0;
+        $added = 0;
 
         foreach ($sheet as $rowdata) {
             $data = [];
@@ -258,14 +311,17 @@ class ilPluginExAssignmentStatusFile extends ilExcel
 
             // Skip rows without valid user ID
             if ($data['usr_id'] === 0) {
+                $skip_no_userid++;
                 continue;
             }
 
             if (!$data['update']) {
+                $skip_no_update++;
                 continue;
             }
 
             if (!isset($this->members[$data['usr_id']])) {
+                $skip_not_member++;
                 continue;
             }
 
@@ -274,7 +330,16 @@ class ilPluginExAssignmentStatusFile extends ilExcel
 
             $this->checkRowData($data);
             $this->updates[] = $data;
+            $added++;
         }
+
+        $debug_log .= "- Skip (no usr_id): $skip_no_userid\n";
+        $debug_log .= "- Skip (update=0): $skip_no_update\n";
+        $debug_log .= "- Skip (not member): $skip_not_member\n";
+        $debug_log .= "- Added to updates: $added\n";
+        $debug_log .= "- First 5 member IDs: " . json_encode(array_slice(array_keys($this->members), 0, 5)) . "\n";
+
+        ilLoggerFactory::getLogger('exc')->info($debug_log);
     }
 
     protected function writeTeamSheet() {
