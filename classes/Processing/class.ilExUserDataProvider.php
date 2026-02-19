@@ -58,8 +58,8 @@ class ilExUserDataProvider extends ilExDataProviderBase
             // PERFORMANCE: Batch-Check aller Submissions
             $submissions_map = $this->checkSubmissionsExistBatch($assignment_id, $user_ids);
 
-            // PERFORMANCE: Batch-Load aller User-Status
-            $statuses_map = $this->getStatusesBatch($assignment_id, $user_ids);
+            // PERFORMANCE: Batch-Load aller User-Status (mit Assignment für ExAutoScore)
+            $statuses_map = $this->getStatusesBatch($assignment_id, $user_ids, $assignment);
 
             // Baue finale User-Daten
             $users_data = [];

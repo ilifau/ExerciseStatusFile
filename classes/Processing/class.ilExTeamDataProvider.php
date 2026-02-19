@@ -51,8 +51,8 @@ class ilExTeamDataProvider extends ilExDataProviderBase
             // PERFORMANCE: Lade alle User-Daten in 1 Query statt N Queries
             $users_data_map = $this->getUserDataBatch($all_user_ids);
 
-            // PERFORMANCE: Lade alle Status-Daten in 1 Query statt N Queries
-            $statuses_map = $this->getStatusesBatch($assignment_id, $all_user_ids);
+            // PERFORMANCE: Lade alle Status-Daten in 1 Query statt N Queries (mit Assignment für ExAutoScore)
+            $statuses_map = $this->getStatusesBatch($assignment_id, $all_user_ids, $assignment);
 
             // Baue Team-Daten mit vorbereiteten User-Daten
             $teams_data = [];

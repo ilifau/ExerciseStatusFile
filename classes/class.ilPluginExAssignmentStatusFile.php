@@ -237,7 +237,7 @@ class ilPluginExAssignmentStatusFile extends ilExcel
                     'status' => $status_string,
                     'mark' => $status_data['mark'] ?? '',
                     'notice' => $status_data['notice'] ?? '',
-                    'comment' => $status_data['comment'] ?? '',
+                    'comment' => $status_data['u_comment'] ?? '',  // FIX: u_comment instead of comment
                     'plag_flag' => 'none',
                     'plag_comment' => ''
                 ];

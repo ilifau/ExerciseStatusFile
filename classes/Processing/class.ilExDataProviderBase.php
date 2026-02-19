@@ -142,9 +142,10 @@ abstract class ilExDataProviderBase
      *
      * @param int $assignment_id Assignment ID
      * @param array $user_ids Array von User-IDs
+     * @param ilExAssignment|null $assignment Assignment-Objekt (optional, für ExAutoScore)
      * @return array Assoziatives Array: user_id => status_data
      */
-    protected function getStatusesBatch(int $assignment_id, array $user_ids): array
+    protected function getStatusesBatch(int $assignment_id, array $user_ids, ?ilExAssignment $assignment = null): array
     {
         if (empty($user_ids)) {
             return [];
@@ -171,6 +172,30 @@ abstract class ilExDataProviderBase
                 ];
             }
 
+            // NEW: Add instant feedback for ExAutoScore assignments
+            if ($assignment && $this->isExAutoScoreAssignment($assignment)) {
+                // PERFORMANCE: Batch-load ALL instant feedbacks at once
+                $instant_feedbacks = $this->getExAutoScoreInstantFeedbackBatch($assignment_id, $user_ids);
+
+                foreach ($user_ids as $user_id) {
+                    if (!isset($statuses[$user_id])) {
+                        $statuses[$user_id] = $this->getDefaultStatus();
+                    }
+
+                    // Use preloaded feedback
+                    $instant_feedback = $instant_feedbacks[$user_id] ?? null;
+
+                    if ($instant_feedback !== null) {
+                        // If comment already exists, append feedback
+                        if (!empty($statuses[$user_id]['comment'])) {
+                            $statuses[$user_id]['comment'] .= "\n\n" . $instant_feedback;
+                        } else {
+                            $statuses[$user_id]['comment'] = $instant_feedback;
+                        }
+                    }
+                }
+            }
+
             return $statuses;
 
         } catch (Exception $e) {
@@ -180,7 +205,7 @@ abstract class ilExDataProviderBase
     }
 
     /**
-     * User-Daten laden (Einzelner User - Legacy-Support)
+     * Load user data (single user - legacy support)
      */
     protected function getMemberData(int $user_id): ?array
     {
@@ -205,7 +230,7 @@ abstract class ilExDataProviderBase
     }
 
     /**
-     * Sendet JSON-Response-Header
+     * Send JSON response headers
      */
     protected function sendJSONHeaders(): void
     {
@@ -215,7 +240,7 @@ abstract class ilExDataProviderBase
     }
 
     /**
-     * Startet Gzip-Kompression wenn möglich
+     * Start gzip compression if possible
      */
     protected function startGzipCompression(): void
     {
@@ -225,7 +250,7 @@ abstract class ilExDataProviderBase
     }
 
     /**
-     * Sendet JSON-Error-Response
+     * Send JSON error response
      */
     protected function sendJSONErrorResponse(string $message, string $details): void
     {
@@ -240,5 +265,131 @@ abstract class ilExDataProviderBase
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }
+
+    /**
+     * Check if assignment is of type ExAutoScore
+     * ExAutoScore Type IDs: 101 (User), 102 (Team)
+     */
+    protected function isExAutoScoreAssignment(ilExAssignment $assignment): bool
+    {
+        $type_id = $assignment->getType();
+        return in_array($type_id, [101, 102], true);
+    }
+
+    /**
+     * Check if ExAutoScore plugin is active
+     */
+    protected function isExAutoScorePluginActive(): bool
+    {
+        try {
+            // Check if plugin is active in il_plugin table (plugin_id = 'exautoscore', active = 1)
+            $query = "SELECT active FROM il_plugin WHERE plugin_id = 'exautoscore'";
+            $result = $this->db->query($query);
+
+            if ($row = $this->db->fetchAssoc($result)) {
+                return (int)$row['active'] === 1;
+            }
+
+            return false;
+
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * PERFORMANCE: Batch-load instant feedback for ALL users at once
+     * Avoids N+1 query problem
+     *
+     * @param int $assignment_id Assignment ID
+     * @param array $user_ids Array of user IDs
+     * @return array Associative array: user_id => feedback_string
+     */
+    protected function getExAutoScoreInstantFeedbackBatch(int $assignment_id, array $user_ids): array
+    {
+        $feedbacks = [];
+
+        if (empty($user_ids)) {
+            return $feedbacks;
+        }
+
+        // Check if ExAutoScore plugin is active
+        if (!$this->isExAutoScorePluginActive()) {
+            return $feedbacks;
+        }
+
+        try {
+            // STRATEGY 1: Load all tasks for individual users (user_id match)
+            $query_individual = "SELECT user_id, instant_status, instant_message
+                                 FROM exautoscore_task
+                                 WHERE assignment_id = " . $this->db->quote($assignment_id, 'integer') . "
+                                 AND user_id IS NOT NULL
+                                 AND " . $this->db->in('user_id', $user_ids, false, 'integer') . "
+                                 ORDER BY submit_time DESC";
+
+            $result = $this->db->query($query_individual);
+            $user_tasks = [];
+
+            while ($row = $this->db->fetchAssoc($result)) {
+                $user_id = (int)$row['user_id'];
+                // Only the newest task per user (ORDER BY submit_time DESC)
+                if (!isset($user_tasks[$user_id])) {
+                    $user_tasks[$user_id] = $row;
+                }
+            }
+
+            // STRATEGY 2: Load team tasks and map them to all team members
+            // Wrapped in try-catch as exc_team may have different name in ILIAS 9
+            try {
+                $query_teams = "SELECT t.team_id, t.instant_status, t.instant_message, et.user_id_list
+                               FROM exautoscore_task t
+                               INNER JOIN exc_team et ON t.team_id = et.id
+                               WHERE t.assignment_id = " . $this->db->quote($assignment_id, 'integer') . "
+                               AND t.team_id IS NOT NULL
+                               AND et.ass_id = " . $this->db->quote($assignment_id, 'integer') . "
+                               ORDER BY t.submit_time DESC";
+
+                $result = $this->db->query($query_teams);
+                $team_tasks = [];
+
+                while ($row = $this->db->fetchAssoc($result)) {
+                    $team_id = (int)$row['team_id'];
+                    // Only the newest task per team
+                    if (!isset($team_tasks[$team_id])) {
+                        // Parse user_id_list (comma-separated)
+                        $team_user_ids = array_map('intval', explode(',', $row['user_id_list']));
+
+                        foreach ($team_user_ids as $user_id) {
+                            // Only if user is in our batch list
+                            if (in_array($user_id, $user_ids, true) && !isset($user_tasks[$user_id])) {
+                                $user_tasks[$user_id] = $row;
+                            }
+                        }
+
+                        $team_tasks[$team_id] = true;
+                    }
+                }
+            } catch (Exception $e) {
+                // Team query failed (e.g. exc_team doesn't exist) - ignore for individual assignments
+                // Silent fail - expected for individual assignments
+            }
+
+            // Convert to feedback strings
+            foreach ($user_tasks as $user_id => $task_data) {
+                $status = $task_data['instant_status'] ?? '';
+                $message = $task_data['instant_message'] ?? '';
+
+                $parts = array_filter([$status, $message]);
+                if (!empty($parts)) {
+                    $feedbacks[$user_id] = implode(': ', $parts);
+                }
+            }
+
+        } catch (Exception $e) {
+            // Silent fail - if ExAutoScore is not installed or query fails
+            return [];
+        }
+
+        return $feedbacks;
+    }
 }
-?>
