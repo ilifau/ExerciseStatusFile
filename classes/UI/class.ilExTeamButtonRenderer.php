@@ -1,8 +1,6 @@
 <?php
 declare(strict_types=1);
 
-use ILIAS\LegalDocuments\Internal;
-
 /**
  * Team Button Renderer
  * 
@@ -110,9 +108,12 @@ class ilExTeamButtonRenderer
             'error_no_users_selected' => $this->plugin->txt('error_no_users_selected'),
         ];
         
-        // Alle Strings mit addslashes() escapen für JavaScript
+        // Alle Strings sicher für JavaScript escapen
+        // json_encode() escaped korrekt: \n, \r, \t, ", ', \, und Unicode
         foreach ($txt as $key => $value) {
-            $txt[$key] = addslashes($value);
+            $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+            // Entferne die umgebenden Anführungszeichen von json_encode
+            $txt[$key] = substr($encoded, 1, -1);
         }
         
         $this->template->addOnLoadCode('
@@ -294,25 +295,37 @@ class ilExTeamButtonRenderer
                         this.initiateMultiFeedbackDownload(assignmentId, selectedTeams);
                     },
                     
+                    getFilenameFromHeader: function(xhr) {
+                        var disposition = xhr.getResponseHeader("Content-Disposition");
+                        if (disposition && disposition.indexOf("filename=") !== -1) {
+                            var matches = disposition.match(/filename[^;=\\n]*=(["\']?)([^"\'\\n]*)\1/);
+                            if (matches && matches[2]) {
+                                return matches[2];
+                            }
+                        }
+                        return null;
+                    },
+
                     initiateMultiFeedbackDownload: function(assignmentId, teamIds) {
                         this.showProgressModal(assignmentId, teamIds);
-                        
+
                         var xhr = new XMLHttpRequest();
                         xhr.open("POST", window.location.pathname, true);
                         xhr.responseType = "blob";
-                        
+
                         var formData = new FormData();
                         formData.append("ass_id", assignmentId);
                         formData.append("team_ids", teamIds.join(","));
                         formData.append("plugin_action", "multi_feedback_download");
-                        
+
                         xhr.onload = function() {
                             if (xhr.status === 200) {
                                 var blob = xhr.response;
                                 var url = window.URL.createObjectURL(blob);
                                 var a = document.createElement("a");
                                 a.href = url;
-                                a.download = "Multi_Feedback_Download.zip";
+                                var filename = window.ExerciseStatusFilePlugin.getFilenameFromHeader(xhr);
+                                a.download = filename || "multifeedback_team.zip";
                                 document.body.appendChild(a);
                                 a.click();
                                 document.body.removeChild(a);
@@ -551,15 +564,9 @@ class ilExTeamButtonRenderer
                         };
                         
                         xhr.onload = function() {
-                            console.log("[ExerciseStatusFile] Upload response received - Status:", xhr.status);
-                            console.log("[ExerciseStatusFile] Response text:", xhr.responseText);
-
                             if (xhr.status === 200) {
                                 window.ExerciseStatusFilePlugin.handleUploadSuccess(xhr.responseText);
                             } else {
-                                console.error("[ExerciseStatusFile] Upload failed with HTTP status:", xhr.status);
-
-                                // Parse error response
                                 var errorMessage = "' . $txt['error_http'] . ' " + xhr.status;
                                 try {
                                     var errorData = JSON.parse(xhr.responseText);
@@ -568,10 +575,7 @@ class ilExTeamButtonRenderer
                                     } else if (errorData.error_details) {
                                         errorMessage = errorData.error_details;
                                     }
-                                    console.error("[ExerciseStatusFile] Parsed error data:", errorData);
                                 } catch(e) {
-                                    console.error("[ExerciseStatusFile] Failed to parse error response:", e);
-                                    // Wenn JSON-Parsing fehlschlägt, verwende responseText direkt
                                     if (xhr.responseText) {
                                         errorMessage = xhr.responseText;
                                     }
@@ -616,40 +620,38 @@ class ilExTeamButtonRenderer
                     
                     handleUploadSuccess: function(responseText) {
                         var uploadContent = document.getElementById("upload-content");
-
-                        console.log("[ExerciseStatusFile] handleUploadSuccess called");
-
-                        // DEBUG: Parse und prüfe Response
                         var responseData = null;
                         var hasError = false;
                         var errorMsg = "";
 
                         try {
                             responseData = JSON.parse(responseText);
-                            console.log("[ExerciseStatusFile] Parsed response data:", responseData);
-
                             if (responseData.error || responseData.success === false) {
                                 hasError = true;
                                 errorMsg = responseData.message || responseData.error_details || "Unbekannter Fehler";
-                                console.error("[ExerciseStatusFile] Error detected in response:", errorMsg);
-                            } else {
-                                console.log("[ExerciseStatusFile] Upload successful!");
                             }
                         } catch(e) {
-                            console.warn("[ExerciseStatusFile] Failed to parse response as JSON:", e);
-                            // Kein JSON - behandle als Text
                             if (responseText.toLowerCase().includes("error") || responseText.toLowerCase().includes("exception")) {
                                 hasError = true;
                                 errorMsg = responseText;
-                                console.error("[ExerciseStatusFile] Error keyword detected in response text");
                             }
                         }
 
-                        // Wenn Fehler erkannt, zeige Error statt Success
                         if (hasError) {
-                            console.error("[ExerciseStatusFile] Redirecting to error handler with message:", errorMsg);
                             window.ExerciseStatusFilePlugin.handleUploadError(errorMsg);
                             return;
+                        }
+
+                        var warningsHtml = "";
+                        if (responseData && responseData.warnings && responseData.warnings.length > 0) {
+                            warningsHtml = "<div style=\"background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px auto; max-width: 500px; text-align: left;\">" +
+                                "<div style=\"display: flex; align-items: start;\">" +
+                                    "<span style=\"font-size: 20px; margin-right: 10px;\">⚠️</span>" +
+                                    "<div style=\"color: #856404;\">";
+                            responseData.warnings.forEach(function(warning) {
+                                warningsHtml += "<p style=\"margin: 0 0 5px 0;\">" + warning + "</p>";
+                            });
+                            warningsHtml += "</div></div></div>";
                         }
 
                         uploadContent.innerHTML =
@@ -657,6 +659,7 @@ class ilExTeamButtonRenderer
                                 "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 20px;\">✅</div>" +
                                 "<h4 style=\"color: #28a745; margin-bottom: 15px;\">' . $txt['upload_success'] . '</h4>" +
                                 "<p style=\"color: #666;\">' . $txt['upload_success_msg'] . '</p>" +
+                                warningsHtml +
                                 "<p id=\"auto-reload-countdown\" style=\"color: #666; margin-top: 10px; font-size: 14px;\">Seite wird in <span id=\"countdown-seconds\">20</span> Sekunden neu geladen...</p>" +
                                 "<button onclick=\"window.location.reload()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
@@ -681,10 +684,6 @@ class ilExTeamButtonRenderer
 
                     handleUploadError: function(error) {
                         var uploadContent = document.getElementById("upload-content");
-
-                        console.error("[ExerciseStatusFile] handleUploadError called with error:", error);
-
-                        // HTML-escape und Zeilenumbrüche konvertieren
                         var escapedError = error
                             .replace(/&/g, "&amp;")
                             .replace(/</g, "&lt;")
@@ -708,11 +707,7 @@ class ilExTeamButtonRenderer
                     },
 
                     resetUploadTab: function() {
-                        console.log("[ExerciseStatusFile] Resetting upload tab");
-
-                        // Assignment ID speichern BEVOR wir das HTML zurücksetzen
                         var currentAssId = window.ExerciseStatusFilePlugin.currentAssignmentId;
-                        console.log("[ExerciseStatusFile] Using assignment ID:", currentAssId);
 
                         var uploadContent = document.getElementById("upload-content");
 
@@ -1004,28 +999,29 @@ class ilExTeamButtonRenderer
                     
                     initiateIndividualMultiFeedbackDownload: function(assignmentId, userIds) {
                         this.showIndividualProgressModal(assignmentId, userIds);
-                        
+
                         var xhr = new XMLHttpRequest();
                         xhr.open("POST", window.location.pathname, true);
                         xhr.responseType = "blob";
-                        
+
                         var formData = new FormData();
                         formData.append("ass_id", assignmentId);
                         formData.append("user_ids", userIds.join(","));
                         formData.append("plugin_action", "multi_feedback_download_individual");
-                        
+
                         xhr.onload = function() {
                             if (xhr.status === 200) {
                                 var blob = xhr.response;
                                 var url = window.URL.createObjectURL(blob);
                                 var a = document.createElement("a");
                                 a.href = url;
-                                a.download = "Individual_Multi_Feedback_Download.zip";
+                                var filename = window.ExerciseStatusFilePlugin.getFilenameFromHeader(xhr);
+                                a.download = filename || "multifeedback.zip";
                                 document.body.appendChild(a);
                                 a.click();
                                 document.body.removeChild(a);
                                 window.URL.revokeObjectURL(url);
-                                
+
                                 window.ExerciseStatusFilePlugin.closeIndividualProgressModal();
                             } else {
                                 var reader = new FileReader();
@@ -1168,15 +1164,9 @@ class ilExTeamButtonRenderer
                         };
                         
                         xhr.onload = function() {
-                            console.log("[ExerciseStatusFile] Individual upload response received - Status:", xhr.status);
-                            console.log("[ExerciseStatusFile] Response text:", xhr.responseText);
-
                             if (xhr.status === 200) {
                                 window.ExerciseStatusFilePlugin.handleIndividualUploadSuccess(xhr.responseText);
                             } else {
-                                console.error("[ExerciseStatusFile] Individual upload failed with HTTP status:", xhr.status);
-
-                                // Parse error response
                                 var errorMessage = "' . $txt['error_http'] . ' " + xhr.status;
                                 try {
                                     var errorData = JSON.parse(xhr.responseText);
@@ -1185,10 +1175,7 @@ class ilExTeamButtonRenderer
                                     } else if (errorData.error_details) {
                                         errorMessage = errorData.error_details;
                                     }
-                                    console.error("[ExerciseStatusFile] Parsed error data:", errorData);
                                 } catch(e) {
-                                    console.error("[ExerciseStatusFile] Failed to parse error response:", e);
-                                    // Wenn JSON-Parsing fehlschlägt, verwende responseText direkt
                                     if (xhr.responseText) {
                                         errorMessage = xhr.responseText;
                                     }
@@ -1233,40 +1220,38 @@ class ilExTeamButtonRenderer
                     
     handleIndividualUploadSuccess: function(responseText) {
                         var uploadContent = document.getElementById("individual-upload-content");
-
-                        console.log("[ExerciseStatusFile] handleIndividualUploadSuccess called");
-
-                        // DEBUG: Parse und prüfe Response
                         var responseData = null;
                         var hasError = false;
                         var errorMsg = "";
 
                         try {
                             responseData = JSON.parse(responseText);
-                            console.log("[ExerciseStatusFile] Parsed response data:", responseData);
-
                             if (responseData.error || responseData.success === false) {
                                 hasError = true;
                                 errorMsg = responseData.message || responseData.error_details || "Unbekannter Fehler";
-                                console.error("[ExerciseStatusFile] Error detected in response:", errorMsg);
-                            } else {
-                                console.log("[ExerciseStatusFile] Individual upload successful!");
                             }
                         } catch(e) {
-                            console.warn("[ExerciseStatusFile] Failed to parse response as JSON:", e);
-                            // Kein JSON - behandle als Text
                             if (responseText.toLowerCase().includes("error") || responseText.toLowerCase().includes("exception")) {
                                 hasError = true;
                                 errorMsg = responseText;
-                                console.error("[ExerciseStatusFile] Error keyword detected in response text");
                             }
                         }
 
-                        // Wenn Fehler erkannt, zeige Error statt Success
                         if (hasError) {
-                            console.error("[ExerciseStatusFile] Redirecting to individual error handler with message:", errorMsg);
                             window.ExerciseStatusFilePlugin.handleIndividualUploadError(errorMsg);
                             return;
+                        }
+
+                        var warningsHtml = "";
+                        if (responseData && responseData.warnings && responseData.warnings.length > 0) {
+                            warningsHtml = "<div style=\"background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px auto; max-width: 500px; text-align: left;\">" +
+                                "<div style=\"display: flex; align-items: start;\">" +
+                                    "<span style=\"font-size: 20px; margin-right: 10px;\">⚠️</span>" +
+                                    "<div style=\"color: #856404;\">";
+                            responseData.warnings.forEach(function(warning) {
+                                warningsHtml += "<p style=\"margin: 0 0 5px 0;\">" + warning + "</p>";
+                            });
+                            warningsHtml += "</div></div></div>";
                         }
 
                         uploadContent.innerHTML =
@@ -1274,6 +1259,7 @@ class ilExTeamButtonRenderer
                                 "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 20px;\">✅</div>" +
                                 "<h4 style=\"color: #28a745; margin-bottom: 15px;\">' . $txt['upload_success'] . '</h4>" +
                                 "<p style=\"color: #666;\">' . $txt['upload_success_msg'] . '</p>" +
+                                warningsHtml +
                                 "<p id=\"individual-auto-reload-countdown\" style=\"color: #666; margin-top: 10px; font-size: 14px;\">Seite wird in <span id=\"individual-countdown-seconds\">20</span> Sekunden neu geladen...</p>" +
                                 "<button onclick=\"window.location.reload()\" " +
                                         "style=\"margin-top: 20px; padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;\">" +
@@ -1298,10 +1284,6 @@ class ilExTeamButtonRenderer
 
                     handleIndividualUploadError: function(error) {
                         var uploadContent = document.getElementById("individual-upload-content");
-
-                        console.error("[ExerciseStatusFile] handleIndividualUploadError called with error:", error);
-
-                        // HTML-escape und Zeilenumbrüche konvertieren
                         var escapedError = error
                             .replace(/&/g, "&amp;")
                             .replace(/</g, "&lt;")
@@ -1325,11 +1307,7 @@ class ilExTeamButtonRenderer
                     },
 
                     resetIndividualUploadTab: function() {
-                        console.log("[ExerciseStatusFile] Resetting individual upload tab");
-
-                        // Assignment ID speichern BEVOR wir das HTML zurücksetzen
                         var currentAssId = window.ExerciseStatusFilePlugin.currentAssignmentId;
-                        console.log("[ExerciseStatusFile] Using assignment ID:", currentAssId);
 
                         var uploadContent = document.getElementById("individual-upload-content");
 
@@ -1468,107 +1446,145 @@ class ilExTeamButtonRenderer
     
     /**
      * Team-Button in ILIAS-Toolbar rendern
+     *
+     * Findet den LETZTEN Toolbar-Button vor dem Filter-Bereich
+     * und fügt danach ein - egal welcher Button das ist.
      */
     public function renderTeamButton(int $assignment_id): void
     {
         $btn_text = addslashes($this->plugin->txt('btn_multi_feedback'));
 
-        // ============================================================
-        // INSTANT BUTTON RENDERING - KANN LEICHT ENTFERNT WERDEN
-        // Ändere setTimeout(500) -> 0 für instant rendering
-        // Um zu revertieren: ändere zurück zu 500
-        // ============================================================
-        $instant_delay = 0;  // War: 500ms - Jetzt: 0ms (instant)
-
         $this->template->addOnLoadCode("
             setTimeout(function() {
                 window.ExerciseStatusFilePlugin.removeExistingPluginBox();
 
-                var targetContainer = null;
-                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+                // Duplikat-Prüfung
+                if (document.getElementById('exstatusfile-team-btn')) {
+                    return;
+                }
+
+                // Finde den LETZTEN Toolbar-Button VOR Filter/Table/Footer
+                var allButtons = document.querySelectorAll('button.btn, input[type=\"submit\"].btn, input[type=\"button\"].btn');
+                var lastToolbarButton = null;
 
                 for (var i = 0; i < allButtons.length; i++) {
                     var btn = allButtons[i];
-                    if (btn.value && (btn.value.includes('Einzelteams') || btn.value.includes('herunterladen'))) {
-                        targetContainer = btn.parentNode;
+                    var text = btn.value || btn.textContent || '';
+
+                    // Ignoriere Buttons in Navigation/Header/Dropdowns (skip, weitermachen)
+                    if (btn.closest('.il-mainbar, .il-metabar, header, nav, .dropdown-menu, .modal')) {
+                        continue;
+                    }
+
+                    // STOP-Bedingungen: Hier endet der Toolbar-Bereich
+                    // Filter-Buttons → Toolbar-Ende erreicht
+                    if (text.includes('Filter') || text.includes('Zurücksetzen') || text.includes('Ausführen')) {
                         break;
                     }
+                    // Table-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('table, .ilTableOuter, .ilTableFilterActivator, .ilTableNav')) {
+                        break;
+                    }
+                    // Footer-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('.ilFooter, #il_footer, footer, [class*=\"footer\"]')) {
+                        break;
+                    }
+                    // Clipboard/Link-Buttons (typisch Footer) → Toolbar-Ende erreicht
+                    if (text.includes('Zwischenablage') || text.includes('Link in')) {
+                        break;
+                    }
+
+                    // Gültiger Toolbar-Button gefunden
+                    lastToolbarButton = btn;
                 }
 
-                if (targetContainer) {
-                    var multiFeedbackBtn = document.createElement('input');
+                if (lastToolbarButton) {
+                    var multiFeedbackBtn = document.createElement('button');
+                    multiFeedbackBtn.id = 'exstatusfile-team-btn';
                     multiFeedbackBtn.type = 'button';
-                    multiFeedbackBtn.value = '{$btn_text}';
-                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
-
-                    var existingButton = targetContainer.querySelector('input[type=\"submit\"], input[type=\"button\"]');
-                    if (existingButton && existingButton.className) {
-                        multiFeedbackBtn.className = existingButton.className;
-                        multiFeedbackBtn.style.background = '#4c6586';
-                        multiFeedbackBtn.style.borderColor = '#4c6586';
-                        multiFeedbackBtn.style.color = 'white';
-                    }
+                    multiFeedbackBtn.textContent = '{$btn_text}';
+                    multiFeedbackBtn.className = 'btn btn-default';
+                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586;';
 
                     multiFeedbackBtn.onclick = function() {
                         window.ExerciseStatusFilePlugin.startTeamMultiFeedback($assignment_id);
                     };
 
-                    targetContainer.appendChild(multiFeedbackBtn);
+                    lastToolbarButton.insertAdjacentElement('afterend', multiFeedbackBtn);
                 }
-            }, {$instant_delay});
+            }, 0);
         ");
     }
 
     /**
      * Individual-Button in ILIAS-Toolbar rendern
+     *
+     * Findet den LETZTEN Toolbar-Button VOR Filter/Table/Footer
+     * und fügt danach ein - stoppt bei Stop-Bedingungen.
      */
     public function renderIndividualButton(int $assignment_id): void
     {
         $btn_text = addslashes($this->plugin->txt('btn_multi_feedback'));
 
-        // ============================================================
-        // INSTANT BUTTON RENDERING - KANN LEICHT ENTFERNT WERDEN
-        // Ändere setTimeout(500) -> 0 für instant rendering
-        // Um zu revertieren: ändere zurück zu 500
-        // ============================================================
-        $instant_delay = 0;  // War: 500ms - Jetzt: 0ms (instant)
-
         $this->template->addOnLoadCode("
             setTimeout(function() {
                 window.ExerciseStatusFilePlugin.removeExistingPluginBox();
 
-                var targetContainer = null;
-                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+                // Duplikat-Prüfung
+                if (document.getElementById('exstatusfile-individual-btn')) {
+                    return;
+                }
+
+                // Finde den LETZTEN Toolbar-Button VOR Filter/Table/Footer
+                var allButtons = document.querySelectorAll('button.btn, input[type=\"submit\"].btn, input[type=\"button\"].btn');
+                var lastToolbarButton = null;
 
                 for (var i = 0; i < allButtons.length; i++) {
                     var btn = allButtons[i];
-                    if (btn.value && (btn.value.includes('herunterladen') || btn.value.includes('Download'))) {
-                        targetContainer = btn.parentNode;
+                    var text = btn.value || btn.textContent || '';
+
+                    // Ignoriere Buttons in Navigation/Header/Dropdowns (skip, weitermachen)
+                    if (btn.closest('.il-mainbar, .il-metabar, header, nav, .dropdown-menu, .modal')) {
+                        continue;
+                    }
+
+                    // STOP-Bedingungen: Hier endet der Toolbar-Bereich
+                    // Filter-Buttons → Toolbar-Ende erreicht
+                    if (text.includes('Filter') || text.includes('Zurücksetzen') || text.includes('Ausführen')) {
                         break;
                     }
+                    // Table-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('table, .ilTableOuter, .ilTableFilterActivator, .ilTableNav')) {
+                        break;
+                    }
+                    // Footer-Bereich → Toolbar-Ende erreicht
+                    if (btn.closest('.ilFooter, #il_footer, footer, [class*=\"footer\"]')) {
+                        break;
+                    }
+                    // Clipboard/Link-Buttons (typisch Footer) → Toolbar-Ende erreicht
+                    if (text.includes('Zwischenablage') || text.includes('Link in')) {
+                        break;
+                    }
+
+                    // Gültiger Toolbar-Button gefunden
+                    lastToolbarButton = btn;
                 }
 
-                if (targetContainer) {
-                    var multiFeedbackBtn = document.createElement('input');
+                if (lastToolbarButton) {
+                    var multiFeedbackBtn = document.createElement('button');
+                    multiFeedbackBtn.id = 'exstatusfile-individual-btn';
                     multiFeedbackBtn.type = 'button';
-                    multiFeedbackBtn.value = '{$btn_text}';
-                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
+                    multiFeedbackBtn.textContent = '{$btn_text}';
+                    multiFeedbackBtn.className = 'btn btn-default';
+                    multiFeedbackBtn.style.cssText = 'margin-left: 10px; background: #4c6586; color: white; border: 1px solid #4c6586;';
 
-                    var existingButton = targetContainer.querySelector('input[type=\"submit\"], input[type=\"button\"]');
-                    if (existingButton && existingButton.className) {
-                        multiFeedbackBtn.className = existingButton.className;
-                        multiFeedbackBtn.style.background = '#4c6586';
-                        multiFeedbackBtn.style.borderColor = '#4c6586';
-                        multiFeedbackBtn.style.color = 'white';
-                    }
-                    
                     multiFeedbackBtn.onclick = function() {
                         window.ExerciseStatusFilePlugin.startIndividualMultiFeedback($assignment_id);
                     };
 
-                    targetContainer.appendChild(multiFeedbackBtn);
+                    lastToolbarButton.insertAdjacentElement('afterend', multiFeedbackBtn);
                 }
-            }, {$instant_delay});
+            }, 0);
         ");
     }
     
@@ -1655,30 +1671,36 @@ class ilExTeamButtonRenderer
 
         $this->template->addOnLoadCode("
             setTimeout(function() {
-                // Check if button already exists
-                if (document.querySelector('input[value=\"🧪 Run Tests\"]')) {
-                    return; // Already rendered
+                // Duplikat-Prüfung
+                if (document.getElementById('exstatusfile-test-btn')) {
+                    return;
                 }
 
-                // Find the target container (same as Multi-Feedback button)
-                var targetContainer = null;
-                var allButtons = document.querySelectorAll('input[type=\"submit\"], input[type=\"button\"]');
+                // Suche nach Multi-Feedback Button als Referenz (wurde gerade eingefügt)
+                var referenceButton = document.getElementById('exstatusfile-individual-btn') || document.getElementById('exstatusfile-team-btn');
 
-                for (var i = 0; i < allButtons.length; i++) {
-                    var btn = allButtons[i];
-                    if (btn.value && (btn.value.includes('Einzelteams') || btn.value.includes('herunterladen') || btn.value.includes('Multi-Feedback'))) {
-                        targetContainer = btn.parentNode;
-                        break;
+                // Fallback: Suche nach anderen Buttons
+                if (!referenceButton) {
+                    var allElements = document.querySelectorAll('button, input[type=\"submit\"], input[type=\"button\"]');
+                    for (var i = 0; i < allElements.length; i++) {
+                        var el = allElements[i];
+                        var text = el.value || el.textContent || '';
+                        if (text.includes('suchen') || text.includes('Search') || text.includes('herunterladen') || text.includes('Download')) {
+                            referenceButton = el;
+                            break;
+                        }
                     }
                 }
 
-                if (targetContainer) {
+                if (referenceButton) {
                     // Create test button
-                    var testBtn = document.createElement('input');
+                    var testBtn = document.createElement('button');
+                    testBtn.id = 'exstatusfile-test-btn';
                     testBtn.type = 'button';
-                    testBtn.value = '🧪 Run Tests';
+                    testBtn.textContent = '🧪 Run Tests';
                     testBtn.title = 'Run Integration Tests (Admin only)';
-                    testBtn.style.cssText = 'margin-left: 10px; background: #ffc107; color: #000; border: 1px solid #ffc107; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-weight: bold;';
+                    testBtn.className = 'btn btn-default';
+                    testBtn.style.cssText = 'margin-left: 10px; background: #ffc107; color: #000; border: 1px solid #ffc107;';
 
                     testBtn.onclick = function() {
                         // Create modal with options
@@ -1726,7 +1748,10 @@ class ilExTeamButtonRenderer
 
                             // Output area (initially hidden)
                             '<div id=\"test-output-container\" style=\"display: none;\">' +
-                                '<h3 style=\"color: #569cd6;\">Test-Ausgabe:</h3>' +
+                                '<div style=\"display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;\">' +
+                                    '<h3 style=\"color: #569cd6; margin: 0;\">Test-Ausgabe:</h3>' +
+                                    '<button id=\"copy-output-btn\" style=\"background: #0d6efd; color: white; border: none; padding: 8px 16px; font-size: 14px; border-radius: 4px; cursor: pointer;\">📋 Kopieren</button>' +
+                                '</div>' +
                                 '<pre id=\"test-output\" style=\"background: #252526; padding: 20px; border-radius: 4px; max-height: 600px; overflow-y: auto; font-family: monospace; line-height: 1.5; white-space: pre-wrap; border: 1px solid #3c3c3c;\"></pre>' +
                                 '<div id=\"test-links\" style=\"margin-top: 20px; padding: 15px; background: #1a3d1a; border-left: 4px solid #4ec9b0; border-radius: 4px; display: none;\">' +
                                     '<h4 style=\"color: #4ec9b0; margin-top: 0;\">📋 Erstellte Übungen:</h4>' +
@@ -1744,11 +1769,46 @@ class ilExTeamButtonRenderer
                         var closeBtn = document.getElementById('close-test-modal');
                         var startBtn = document.getElementById('start-tests-btn');
                         var cleanupOnlyBtn = document.getElementById('cleanup-only-btn');
+                        var copyOutputBtn = document.getElementById('copy-output-btn');
                         var optionsPanel = document.getElementById('test-options');
                         var createdExercises = [];
 
                         closeBtn.onclick = function() {
                             modal.remove();
+                        };
+
+                        // Copy output button handler
+                        copyOutputBtn.onclick = function() {
+                            var textToCopy = output.textContent;
+                            navigator.clipboard.writeText(textToCopy).then(function() {
+                                var originalText = copyOutputBtn.textContent;
+                                copyOutputBtn.textContent = '✅ Kopiert!';
+                                copyOutputBtn.style.background = '#28a745';
+                                setTimeout(function() {
+                                    copyOutputBtn.textContent = originalText;
+                                    copyOutputBtn.style.background = '#0d6efd';
+                                }, 2000);
+                            }).catch(function(err) {
+                                // Fallback for older browsers
+                                var textArea = document.createElement('textarea');
+                                textArea.value = textToCopy;
+                                textArea.style.position = 'fixed';
+                                textArea.style.left = '-9999px';
+                                document.body.appendChild(textArea);
+                                textArea.select();
+                                try {
+                                    document.execCommand('copy');
+                                    copyOutputBtn.textContent = '✅ Kopiert!';
+                                    copyOutputBtn.style.background = '#28a745';
+                                    setTimeout(function() {
+                                        copyOutputBtn.textContent = '📋 Kopieren';
+                                        copyOutputBtn.style.background = '#0d6efd';
+                                    }, 2000);
+                                } catch (e) {
+                                    alert('Kopieren fehlgeschlagen: ' + e);
+                                }
+                                document.body.removeChild(textArea);
+                            });
                         };
 
                         // Cleanup-only button handler
@@ -1889,10 +1949,10 @@ class ilExTeamButtonRenderer
                         };
                     };
 
-                    targetContainer.appendChild(testBtn);
+                    // Sicher nach dem Referenz-Button einfügen
+                    referenceButton.insertAdjacentElement('afterend', testBtn);
                 }
             }, 100); // Small delay to ensure Multi-Feedback button is rendered first
         ");
     }
 }
-?>

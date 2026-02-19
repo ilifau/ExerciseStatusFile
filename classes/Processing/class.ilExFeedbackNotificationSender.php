@@ -34,12 +34,15 @@ class ilExFeedbackNotificationSender
         try {
             global $DIC;
 
-            // Read debug mode from plugin constant (with fallback)
-            $debug_mode = false;
-            if (class_exists('ilExerciseStatusFilePlugin')) {
-                $debug_mode = defined('ilExerciseStatusFilePlugin::DEBUG_EMAIL_NOTIFICATIONS')
-                    ? ilExerciseStatusFilePlugin::DEBUG_EMAIL_NOTIFICATIONS
-                    : false;
+            // Read debug mode from plugin configuration
+            // Priority: 1. Session (modal checkbox) → 2. DB Setting → 3. Fallback true (safe)
+            $debug_mode = true; // Safe default
+            if (class_exists('ilExerciseStatusFileConfigGUI')) {
+                $debug_mode = ilExerciseStatusFileConfigGUI::isDebugModeEnabled();
+            } elseif (class_exists('ilExerciseStatusFilePlugin') &&
+                      defined('ilExerciseStatusFilePlugin::DEBUG_EMAIL_NOTIFICATIONS')) {
+                // Fallback to constant for backwards compatibility
+                $debug_mode = ilExerciseStatusFilePlugin::DEBUG_EMAIL_NOTIFICATIONS;
             }
 
             // Prevent duplicates

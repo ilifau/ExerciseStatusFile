@@ -16,15 +16,26 @@ class ilExFeedbackUploadHandler
     private array $temp_directories = [];
     private array $processing_stats = [];
     private array $renamed_files = []; // Tracking für umbenannte Dateien
-    
+    private array $warnings = []; // Warnungen für den User (werden in Response zurückgegeben)
+    private bool $suppress_ui_messages = false;
+
     public function __construct()
     {
         global $DIC;
         $this->logger = $DIC->logger()->root();
-        
+
         register_shutdown_function([$this, 'cleanupAllTempDirectories']);
     }
-    
+
+    /**
+     * Suppress UI messages (setOnScreenMessage calls)
+     * Use this for automated tests to prevent messages from appearing on next page load
+     */
+    public function setSuppressUIMessages(bool $suppress): void
+    {
+        $this->suppress_ui_messages = $suppress;
+    }
+
     /**
      * Feedback Upload Processing
      */
@@ -79,6 +90,9 @@ class ilExFeedbackUploadHandler
             $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
             $status_files = $this->findStatusFiles($extracted_files, $checksums);
 
+            // Prüfe ob Status-Dateien unverändert sind (User-Hinweis)
+            $this->checkForUnmodifiedStatusFiles($extracted_files, $checksums);
+
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
                 try {
@@ -120,21 +134,28 @@ class ilExFeedbackUploadHandler
             $checksums = $this->loadChecksumsFromExtractedFiles($extracted_files);
             $status_files = $this->findStatusFiles($extracted_files, $checksums);
 
+            // Prüfe ob Status-Dateien unverändert sind (User-Hinweis)
+            $this->checkForUnmodifiedStatusFiles($extracted_files, $checksums);
+
             // Status-File-Verarbeitung ist optional
             if (!empty($status_files)) {
                 try {
                     $this->processStatusFiles($status_files, $assignment_id, false);
                 } catch (Exception $e) {
-                    // Prüfe ob es ein kritischer Fehler ist (z.B. ungültiger Status-Wert)
                     $error_msg = $e->getMessage();
+
+                    // Kritische Fehler (ungültiger Status-Wert) -> Upload abbrechen
                     if (strpos($error_msg, 'Invalid status') !== false ||
                         strpos($error_msg, 'Status file error') !== false) {
-                        // Kritischer Fehler - Upload abbrechen
                         $this->logger->error("Critical error in status file: " . $error_msg);
                         throw new Exception("Status-File Fehler: " . $error_msg);
                     }
-                    // Nur bei anderen Fehlern (z.B. leere Files) fortfahren
-                    $this->logger->info("Status file processing skipped: " . $error_msg);
+
+                    // Keine Updates gefunden -> User-Warnung
+                    if (strpos($error_msg, 'Keine Updates') !== false ||
+                        strpos($error_msg, 'Keine Status-Updates') !== false) {
+                        $this->showUserWarning("Keine Status-Updates gefunden. Haben Sie die 'update'-Spalte auf 1 gesetzt für die Zeilen, die aktualisiert werden sollen?");
+                    }
                 }
             }
 
@@ -170,34 +191,55 @@ class ilExFeedbackUploadHandler
         $status_files_found = [];
         $has_team_structure = false;
         $has_user_structure = false;
-        
+        $zip_assignment_ids = [];
+
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $filename = $zip->getNameIndex($i);
             $file_list[] = $filename;
-            
+
             $basename = basename($filename);
             $status_file_patterns = [
                 'status.xlsx', 'status.csv', 'status.xls',
                 'batch_status.xlsx', 'batch_status.csv'
             ];
-            
+
             foreach ($status_file_patterns as $pattern) {
                 if (strcasecmp($basename, $pattern) === 0) {
                     $status_files_found[] = $filename;
                     break;
                 }
             }
-            
+
             if (preg_match('/Team_\d+\//', $filename)) {
                 $has_team_structure = true;
             }
-            
+
             if (preg_match('/[^\/]+_[^\/]+_[^\/]+_\d+\//', $filename)) {
                 $has_user_structure = true;
             }
+
+            // Extract assignment ID from folder structure
+            // Pattern: Multi_Feedback_Individual_*_XXX/ or Multi_Feedback_Team_*_XXX/
+            if (preg_match('/Multi_Feedback_(?:Individual|Team)_[^_]+_(\d+)\//', $filename, $matches)) {
+                $zip_assignment_ids[(int)$matches[1]] = true;
+            }
         }
-        
+
         $zip->close();
+
+        // Validate assignment ID matches ZIP content
+        if (!empty($zip_assignment_ids)) {
+            $found_ids = array_keys($zip_assignment_ids);
+            if (!in_array($assignment_id, $found_ids)) {
+                $found_ids_str = implode(', ', $found_ids);
+                $this->logger->error("Assignment ID mismatch: ZIP contains assignment(s) $found_ids_str but upload targets assignment $assignment_id");
+                throw new Exception(
+                    "Falsches Assignment: Das ZIP-Archiv wurde für Assignment $found_ids_str erstellt, " .
+                    "aber Sie versuchen es zu Assignment $assignment_id hochzuladen. " .
+                    "Bitte laden Sie das ZIP zur korrekten Übungseinheit hoch."
+                );
+            }
+        }
 
         // Validierungen
         // Status-Datei ist optional - Feedback kann auch ohne Status-Updates hochgeladen werden
@@ -358,14 +400,15 @@ class ilExFeedbackUploadHandler
     /**
      * Findet Status-Files im entpackten ZIP mit intelligenter Auswahl
      *
-     * Logik:
-     * - Wenn nur status.xlsx geändert wurde -> verwende xlsx
-     * - Wenn nur status.csv geändert wurde -> verwende csv
-     * - Wenn beide geändert wurden -> verwende xlsx und zeige Warnung
-     * - Wenn keine geändert wurde -> verwende xlsx (falls vorhanden)
+     * NEUE Logik (Content-basiert):
+     * - Prüft in beiden Dateien wie viele Zeilen update=1 haben
+     * - Wenn nur xlsx Updates hat -> verwende xlsx
+     * - Wenn nur csv Updates hat -> verwende csv
+     * - Wenn beide Updates haben -> verwende xlsx und zeige Warnung
+     * - Wenn keine Updates hat -> zeige Hinweis, keine Verarbeitung
      *
      * @param array $extracted_files Die extrahierten Dateien
-     * @param array $checksums Checksums aus checksums.json
+     * @param array $checksums Checksums aus checksums.json (nicht mehr primär verwendet)
      * @return array Liste der zu verarbeitenden Status-Files (immer max. 1 File)
      */
     private function findStatusFiles(array $extracted_files, array $checksums): array
@@ -389,37 +432,36 @@ class ilExFeedbackUploadHandler
             return [];
         }
 
-        // Prüfe welche Datei(en) geändert wurden
-        $xlsx_modified = false;
-        $csv_modified = false;
+        // Content-basierte Datei-Auswahl: Zähle update=1 Zeilen in jeder Datei
+        $xlsx_updates = $xlsx_file ? $this->countUpdateRows($xlsx_file['extracted_path']) : 0;
+        $csv_updates = $csv_file ? $this->countUpdateRows($csv_file['extracted_path']) : 0;
 
-        if ($xlsx_file && !empty($checksums)) {
-            $xlsx_modified = $this->isFileModified($xlsx_file, $checksums);
-        }
+        // Entscheidungslogik basierend auf tatsächlichen Updates
+        $xlsx_has_updates = ($xlsx_updates > 0);
+        $csv_has_updates = ($csv_updates > 0);
 
-        if ($csv_file && !empty($checksums)) {
-            $csv_modified = $this->isFileModified($csv_file, $checksums);
-        }
-
-        // Entscheidungslogik
-        if ($xlsx_modified && $csv_modified) {
-            // BEIDE geändert -> xlsx verwenden aber Warnung
-            $this->logger->warning(
-                "Both status.xlsx and status.csv were modified. Using status.xlsx. " .
-                "Please modify only ONE status file per upload."
+        if ($xlsx_has_updates && $csv_has_updates) {
+            // BEIDE haben Updates -> xlsx verwenden aber Warnung
+            $this->showUserWarning(
+                "Hinweis: Sowohl status.xlsx ($xlsx_updates Zeilen) als auch status.csv ($csv_updates Zeilen) " .
+                "enthalten Updates. Es wird status.xlsx verwendet. " .
+                "Bitte ändern Sie nur EINE Status-Datei pro Upload."
             );
+            $this->logger->info("findStatusFiles: Both files have updates (xlsx=$xlsx_updates, csv=$csv_updates), using xlsx");
             return [$xlsx_file['extracted_path']];
 
-        } elseif ($xlsx_modified) {
-            // Nur xlsx geändert
+        } elseif ($xlsx_has_updates) {
+            // Nur xlsx hat Updates
+            $this->logger->info("findStatusFiles: Using status.xlsx ($xlsx_updates updates)");
             return [$xlsx_file['extracted_path']];
 
-        } elseif ($csv_modified) {
-            // Nur csv geändert
+        } elseif ($csv_has_updates) {
+            // Nur csv hat Updates
+            $this->logger->info("findStatusFiles: Using status.csv ($csv_updates updates)");
             return [$csv_file['extracted_path']];
 
         } else {
-            // Keine Änderungen oder keine Checksums vorhanden
+            // Keine Datei hat Updates - Fallback auf vorhandene Datei
             if ($xlsx_file) {
                 return [$xlsx_file['extracted_path']];
             } elseif ($csv_file) {
@@ -428,6 +470,178 @@ class ilExFeedbackUploadHandler
         }
 
         return [];
+    }
+
+    /**
+     * Prüft ob beide Status-Dateien keine Updates enthalten und zeigt Warnung
+     * (Content-basierte Prüfung statt Checksum)
+     */
+    private function checkForUnmodifiedStatusFiles(array $extracted_files, array $checksums): void
+    {
+        $xlsx_file = null;
+        $csv_file = null;
+
+        foreach ($extracted_files as $file) {
+            $basename = basename($file['original_name']);
+            if ($basename === 'status.xlsx') {
+                $xlsx_file = $file;
+            } elseif ($basename === 'status.csv') {
+                $csv_file = $file;
+            }
+        }
+
+        // Keine Status-Dateien vorhanden
+        if (!$xlsx_file && !$csv_file) {
+            return;
+        }
+
+        // Prüfe ob BEIDE keine Updates haben (content-basiert)
+        $xlsx_updates = $xlsx_file ? $this->countUpdateRows($xlsx_file['extracted_path']) : 0;
+        $csv_updates = $csv_file ? $this->countUpdateRows($csv_file['extracted_path']) : 0;
+
+        if ($xlsx_updates === 0 && $csv_updates === 0) {
+            $this->showUserWarning(
+                "Hinweis: Weder status.xlsx noch status.csv enthalten Zeilen mit update=1. " .
+                "Wenn Sie Status-Updates vornehmen möchten, setzen Sie bitte in der update-Spalte den Wert 1 für die zu aktualisierenden Zeilen."
+            );
+        }
+    }
+
+    /**
+     * Speichert eine Warnung für den User (wird in Response zurückgegeben)
+     */
+    private function showUserWarning(string $message): void
+    {
+        $this->warnings[] = $message;
+    }
+
+    /**
+     * Gibt alle gesammelten Warnungen zurück
+     */
+    public function getWarnings(): array
+    {
+        return $this->warnings;
+    }
+
+    /**
+     * Zählt die Anzahl der Zeilen mit update=1 in einer Status-Datei (xlsx oder csv)
+     *
+     * @param string $filepath Pfad zur Status-Datei
+     * @return int Anzahl der Zeilen mit update=1, oder -1 bei Fehler
+     */
+    private function countUpdateRows(string $filepath): int
+    {
+        if (!file_exists($filepath)) {
+            return -1;
+        }
+
+        try {
+            $ext = strtolower(pathinfo($filepath, PATHINFO_EXTENSION));
+
+            if ($ext === 'csv') {
+                // CSV-Datei: Manuelles Parsing für bessere Performance
+                return $this->countUpdateRowsInCsv($filepath);
+            } else {
+                // XLSX-Datei: Mit PhpSpreadsheet
+                return $this->countUpdateRowsInXlsx($filepath);
+            }
+        } catch (\Exception $e) {
+            $this->logger->warning("countUpdateRows($filepath): Error - " . $e->getMessage());
+            return -1;
+        }
+    }
+
+    /**
+     * Zählt update=1 Zeilen in einer CSV-Datei
+     */
+    private function countUpdateRowsInCsv(string $filepath): int
+    {
+        $handle = fopen($filepath, 'r');
+        if (!$handle) {
+            $this->logger->error("countUpdateRowsInCsv: Cannot open file $filepath");
+            return -1;
+        }
+
+        // Erste Zeile lesen für Delimiter-Erkennung
+        $firstLine = fgets($handle);
+        rewind($handle);
+
+        // Delimiter erkennen
+        $commaCount = substr_count($firstLine, ',');
+        $semicolonCount = substr_count($firstLine, ';');
+        $delimiter = ($semicolonCount > $commaCount) ? ';' : ',';
+
+        $updateCount = 0;
+        $updateColIndex = -1;
+        $isHeader = true;
+
+        while (($row = fgetcsv($handle, 0, $delimiter, '"')) !== false) {
+            if ($isHeader) {
+                // Header-Zeile: Finde update-Spalte
+                foreach ($row as $i => $col) {
+                    if (strtolower(trim($col)) === 'update') {
+                        $updateColIndex = $i;
+                        break;
+                    }
+                }
+                $isHeader = false;
+                continue;
+            }
+
+            // Daten-Zeile: Prüfe update-Wert
+            if ($updateColIndex >= 0 && isset($row[$updateColIndex])) {
+                $updateVal = trim($row[$updateColIndex]);
+                if ($updateVal === '1' || strtolower($updateVal) === 'true' || strtolower($updateVal) === 'yes') {
+                    $updateCount++;
+                }
+            }
+        }
+
+        fclose($handle);
+        return $updateCount;
+    }
+
+    /**
+     * Zählt update=1 Zeilen in einer XLSX-Datei
+     */
+    private function countUpdateRowsInXlsx(string $filepath): int
+    {
+        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($filepath);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($filepath);
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $highestRow = $sheet->getHighestRow();
+        $highestColumn = $sheet->getHighestColumn();
+
+        // Header lesen und update-Spalte finden
+        $updateColIndex = -1;
+        $headerRow = $sheet->rangeToArray('A1:' . $highestColumn . '1', null, true, false)[0];
+
+        foreach ($headerRow as $i => $col) {
+            if (strtolower(trim((string)$col)) === 'update') {
+                $updateColIndex = $i;
+                break;
+            }
+        }
+
+        if ($updateColIndex < 0) {
+            return 0; // Keine update-Spalte gefunden
+        }
+
+        // Spalten-Buchstabe ermitteln
+        $updateColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($updateColIndex + 1);
+
+        $updateCount = 0;
+        for ($row = 2; $row <= $highestRow; $row++) {
+            $cellValue = $sheet->getCell($updateColLetter . $row)->getValue();
+            $updateVal = strtolower(trim((string)$cellValue));
+
+            if ($updateVal === '1' || $updateVal === 'true' || $updateVal === 'yes') {
+                $updateCount++;
+            }
+        }
+        return $updateCount;
     }
 
     /**
@@ -443,15 +657,40 @@ class ilExFeedbackUploadHandler
             return false;
         }
 
-        $current_checksum = hash_file('sha256', $file['extracted_path']);
         $original_name = $file['original_name'];
 
         // Checksums sind nach original_name indiziert
         if (isset($checksums[$original_name])) {
-            return $current_checksum !== $checksums[$original_name];
+            $checksum_data = $checksums[$original_name];
+
+            // Neues Format: Array mit 'sha256' und/oder 'md5'
+            if (is_array($checksum_data)) {
+                // Bevorzuge SHA256, fallback auf MD5
+                if (isset($checksum_data['sha256'])) {
+                    $current_hash = hash_file('sha256', $file['extracted_path']);
+                    $stored_hash = $checksum_data['sha256'];
+                    $is_modified = ($current_hash !== $stored_hash);
+                    $this->logger->debug("isFileModified('$original_name'): SHA256 compare - " . ($is_modified ? 'MODIFIED' : 'unchanged'));
+                    return $is_modified;
+                } elseif (isset($checksum_data['md5'])) {
+                    $current_hash = md5_file($file['extracted_path']);
+                    $stored_hash = $checksum_data['md5'];
+                    $is_modified = ($current_hash !== $stored_hash);
+                    $this->logger->debug("isFileModified('$original_name'): MD5 compare - " . ($is_modified ? 'MODIFIED' : 'unchanged'));
+                    return $is_modified;
+                }
+            }
+            // Altes Format: direkter Hash-String (für Rückwärtskompatibilität)
+            elseif (is_string($checksum_data)) {
+                $current_hash = hash_file('sha256', $file['extracted_path']);
+                $is_modified = ($current_hash !== $checksum_data);
+                $this->logger->debug("isFileModified('$original_name'): Legacy compare - " . ($is_modified ? 'MODIFIED' : 'unchanged'));
+                return $is_modified;
+            }
         }
 
         // Kein Checksum gefunden -> als geändert betrachten
+        $this->logger->debug("isFileModified('$original_name'): No checksum found -> treating as MODIFIED");
         return true;
     }
 
@@ -473,8 +712,14 @@ class ilExFeedbackUploadHandler
 
                     if (is_array($checksums)) {
                         $this->logger->info("Loaded " . count($checksums) . " checksums from checksums.json");
+                        // Debug: Log the keys to see what's in the checksums
+                        $this->logger->info("Checksum keys: " . implode(', ', array_keys($checksums)));
                         return $checksums;
+                    } else {
+                        $this->logger->warning("checksums.json could not be parsed as array. JSON error: " . json_last_error_msg());
                     }
+                } else {
+                    $this->logger->warning("checksums.json file not found at path: " . $checksums_path);
                 }
             }
         }
@@ -504,14 +749,13 @@ class ilExFeedbackUploadHandler
             
             foreach ($status_files as $file_path) {
                 if (!file_exists($file_path)) continue;
-                
+
                 try {
                     $status_file = new ilPluginExAssignmentStatusFile();
                     $status_file->init($assignment);
                     $status_file->allowPlagiarismUpdate(true);
-                    
                     $status_file->loadFromFile($file_path);
-                    
+
                     if ($status_file->isLoadFromFileSuccess()) {
                         if ($status_file->hasUpdates()) {
                             $updates = $status_file->getUpdates();
@@ -550,17 +794,18 @@ class ilExFeedbackUploadHandler
                             $status_file->applyStatusUpdates();
                             $this->clearAssignmentCaches($assignment_id);
                             
-                            global $DIC;
-                            $DIC->ui()->mainTemplate()->setOnScreenMessage('success', $status_file->getInfo(), true);
+                            if (!$this->suppress_ui_messages) {
+                                global $DIC;
+                                $DIC->ui()->mainTemplate()->setOnScreenMessage('success', $status_file->getInfo(), true);
+                            }
                             
                             $this->processing_stats['status_updates'] = $updates_count;
                             $this->processing_stats['processed_file'] = basename($file_path);
                             $this->processing_stats['timestamp'] = date('Y-m-d H:i:s');
                             $updates_applied = true;
                             
-                            $this->logger->debug("Applied $updates_count status updates from " . basename($file_path));
                             break;
-                            
+
                         } else {
                             $load_errors[] = "Keine Updates in " . basename($file_path) . " gefunden.";
                         }
@@ -585,11 +830,10 @@ class ilExFeedbackUploadHandler
                 }
                 throw new Exception($error_msg);
             }
-            
+
             $this->clearAssignmentCaches($assignment_id);
-            
+
         } catch (Exception $e) {
-            $this->logger->error("Error in status file processing: " . $e->getMessage());
             throw $e;
         }
     }
@@ -1265,7 +1509,7 @@ class ilExFeedbackUploadHandler
     private function createTempDirectory(string $prefix): string
     {
         $temp_dir = sys_get_temp_dir() . '/plugin_' . $prefix . '_' . uniqid();
-        mkdir($temp_dir, 0777, true);
+        mkdir($temp_dir, 0700, true);  // Nur Owner-Zugriff für Sicherheit
         $this->temp_directories[] = $temp_dir;
         
         return $temp_dir;

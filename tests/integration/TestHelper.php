@@ -17,6 +17,7 @@ class IntegrationTestHelper
     private array $created_users = [];
     private int $test_counter = 0;
     private int $parent_ref_id = 1; // Default: root category
+    private array $last_csv_debug = []; // Debug info from last CSV modification
 
     public function __construct(int $parent_ref_id = 1)
     {
@@ -26,6 +27,18 @@ class IntegrationTestHelper
         $this->parent_ref_id = $parent_ref_id;
 
         // Note: Cleanup is NOT automatic anymore - caller decides when to cleanup
+    }
+
+    /**
+     * Safely log a debug message (ignores permission errors)
+     */
+    private function debugLog(string $message): void
+    {
+        try {
+            $this->logger->error($message);
+        } catch (\Exception $e) {
+            // Silently ignore log errors (e.g., permission denied)
+        }
     }
 
     /**
@@ -103,7 +116,7 @@ class IntegrationTestHelper
             $user = new ilObjUser();
             $user->setLogin($username);
             $user->setFirstname("Test");
-            $user->setLastname("User $i");
+            $user->setLastname("User$i");
             $user->setEmail("test_" . $unique_id . "_$i@example.com");
             $user->setPasswd("test123!", ilObjUser::PASSWD_PLAIN);
             $user->setActive(true);
@@ -236,7 +249,7 @@ class IntegrationTestHelper
         // For tests, we need to manually create a ZIP with the correct structure
         // The actual download handler uses output buffering and sends headers
 
-        require_once __DIR__ . '/../../classes/Processing/class.ilExMultiFeedbackDownloadHandler.php';
+        require_once __DIR__ . '/../../classes/Processing/class.ilExTeamMultiFeedbackDownloadHandler.php';
 
         $assignment = new ilExAssignment($assignment_id);
         $is_team = $assignment->getAssignmentType()->usesTeams();
@@ -250,6 +263,9 @@ class IntegrationTestHelper
         if ($zip->open($zip_path, ZipArchive::CREATE) !== true) {
             throw new Exception("Cannot create ZIP: $zip_path");
         }
+
+        // Initialize checksums array
+        $checksums = [];
 
         // Get all submissions
         if ($is_team) {
@@ -279,26 +295,88 @@ class IntegrationTestHelper
             $members = ilExerciseMembers::_getMembers($exc_id);
 
             foreach ($members as $user_id) {
-                $submission = new ilExSubmission($assignment, $user_id);
-                $files = $submission->getFiles();
+                // Get user info for folder name (Format: Lastname_Firstname_Login_ID)
+                $user = new ilObjUser($user_id);
+                $user_folder = $user->getLastname() . '_' . $user->getFirstname() . '_' .
+                               $user->getLogin() . '_' . $user_id . '/';
 
-                if (empty($files)) {
-                    continue;
-                }
+                // Get files directly from filesystem (ilExSubmission::getFiles() may not work for test data)
+                $ilias_data_dir = CLIENT_DATA_DIR;
+                $user_submission_dir = $ilias_data_dir . '/ilExercise/' . $exc_id . '/exc_' .
+                                       $assignment_id . '/' . $user_id;
 
-                $user_folder = 'user_' . $user_id . '/';
+                if (is_dir($user_submission_dir)) {
+                    $dir_files = array_diff(scandir($user_submission_dir), ['.', '..']);
 
-                foreach ($files as $file) {
-                    $file_path = $file['fullpath'] ?? '';
-                    if (file_exists($file_path)) {
-                        $zip->addFile($file_path, $user_folder . $file['name']);
+                    foreach ($dir_files as $filename) {
+                        $file_path = $user_submission_dir . '/' . $filename;
+
+                        if (is_file($file_path)) {
+                            $zip->addFile($file_path, $user_folder . $filename);
+
+                            // Add checksum for submission file
+                            $checksums[$user_folder . $filename] = [
+                                'md5' => md5_file($file_path),
+                                'sha256' => hash_file('sha256', $file_path),
+                                'size' => filesize($file_path),
+                                'type' => 'submission'
+                            ];
+                        }
                     }
                 }
             }
         }
 
-        // Add empty status.xlsx
-        $zip->addFromString('status.xlsx', '');
+        // Create status.csv with all members
+        $csv_content = "update;usr_id;login;lastname;firstname;status;mark;notice;comment;plagiarism;plag_comment\n";
+
+        // Note: $checksums already contains submission file checksums from above
+        $exc_id = $assignment->getExerciseId();
+        $members = ilExerciseMembers::_getMembers($exc_id);
+
+        // DEBUG: Log member count
+        global $DIC;
+        $this->debugLog("DEBUG downloadMultiFeedbackZip: Found " . count($members) . " members for exercise $exc_id");
+
+        $csv_line_count = 0;
+        foreach ($members as $user_id) {
+            $user = new ilObjUser($user_id);
+            $member_status = ilExerciseMembers::_lookupStatus($exc_id, $user_id);
+            $csv_content .= "0;" . $user_id . ";" . $user->getLogin() . ";" .
+                           $user->getLastname() . ";" . $user->getFirstname() . ";" .
+                           ($member_status ?: 'notgraded') . ";;;;\n";
+            $csv_line_count++;
+        }
+
+        // DEBUG: Log last user added
+        $this->debugLog("DEBUG downloadMultiFeedbackZip: Added $csv_line_count lines to CSV, last user_id: $user_id");
+
+        // Write status files to temp for checksum calculation
+        $temp_csv = $temp_dir . '/status.csv';
+        $temp_xlsx = $temp_dir . '/status.xlsx';
+        file_put_contents($temp_csv, $csv_content);
+        file_put_contents($temp_xlsx, ''); // Empty xlsx placeholder
+
+        // Calculate checksums for status files
+        $checksums['status.csv'] = [
+            'md5' => md5_file($temp_csv),
+            'sha256' => hash_file('sha256', $temp_csv),
+            'size' => filesize($temp_csv),
+            'type' => 'status_file'
+        ];
+        $checksums['status.xlsx'] = [
+            'md5' => md5_file($temp_xlsx),
+            'sha256' => hash_file('sha256', $temp_xlsx),
+            'size' => filesize($temp_xlsx),
+            'type' => 'status_file'
+        ];
+
+        // Add status files to ZIP
+        $zip->addFile($temp_csv, 'status.csv');
+        $zip->addFile($temp_xlsx, 'status.xlsx');
+
+        // Add checksums.json
+        $zip->addFromString('checksums.json', json_encode($checksums, JSON_PRETTY_PRINT));
 
         $zip->close();
 
@@ -342,6 +420,7 @@ class IntegrationTestHelper
 
     /**
      * Uploads modified multi-feedback ZIP
+     * Returns upload result including warnings
      */
     public function uploadMultiFeedbackZip(
         int $assignment_id,
@@ -352,21 +431,368 @@ class IntegrationTestHelper
         require_once __DIR__ . '/../../classes/Processing/class.ilExFeedbackUploadHandler.php';
 
         $handler = new ilExFeedbackUploadHandler();
+        $handler->setSuppressUIMessages(true); // Prevent messages from showing on next page during tests
 
         $parameters = [
             'assignment_id' => $assignment_id,
             'tutor_id' => $tutor_id,
-            'uploaded_file' => [
-                'tmp_name' => $zip_path,
-                'name' => basename($zip_path)
-            ]
+            'zip_path' => $zip_path
         ];
 
-        ob_start();
-        $handler->handleFeedbackUpload($parameters);
-        $output = ob_get_clean();
+        try {
+            $handler->handleFeedbackUpload($parameters);
 
-        return json_decode($output, true) ?? [];
+            // Get processing stats and warnings
+            $stats = $handler->getProcessingStats();
+            $warnings = $handler->getWarnings();
+
+            return [
+                'success' => true,
+                'stats' => $stats,
+                'warnings' => $warnings
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'warnings' => $handler->getWarnings()
+            ];
+        }
+    }
+
+    /**
+     * Modifies a specific status file (xlsx or csv) in a ZIP
+     * Used for testing status file detection
+     *
+     * @param string $zip_path Path to the ZIP file
+     * @param string $type 'xlsx' or 'csv'
+     * @param array $updates Array of status updates [['user_id' => X, 'update' => 1, 'status' => 'passed'], ...]
+     * @return string Path to the modified ZIP
+     */
+    public function modifyStatusFileInZip(string $zip_path, string $type, array $updates): string
+    {
+        $extract_dir = sys_get_temp_dir() . '/test_status_' . uniqid();
+        mkdir($extract_dir, 0777, true);
+
+        // Extract ZIP
+        $zip = new ZipArchive();
+        if ($zip->open($zip_path) !== true) {
+            throw new Exception("Failed to open ZIP: $zip_path");
+        }
+        $zip->extractTo($extract_dir);
+        $zip->close();
+
+        // Find and modify the status file
+        $status_file = $extract_dir . '/status.' . $type;
+
+        if ($type === 'csv') {
+            // Read existing CSV or create new
+            $csv_data = [];
+            if (file_exists($status_file)) {
+                // Read entire file content first to ensure we get all lines
+                $file_content = file_get_contents($status_file);
+                $lines = explode("\n", $file_content);
+
+                // Remove empty lines at the end
+                while (!empty($lines) && trim(end($lines)) === '') {
+                    array_pop($lines);
+                }
+
+                if (!empty($lines)) {
+                    // First line is header
+                    $headers = str_getcsv(array_shift($lines), ';');
+                    $header_count = count($headers);
+
+                    // DEBUG: Log header info
+                    global $DIC;
+                    $this->debugLog("DEBUG modifyStatusFileInZip: Read " . count($lines) . " data lines from CSV");
+
+                    foreach ($lines as $line_num => $line) {
+                        if (trim($line) === '') {
+                            continue; // Skip empty lines
+                        }
+
+                        $row = str_getcsv($line, ';');
+                        $row_count = count($row);
+
+                        if ($row_count < $header_count) {
+                            // Pad with empty strings
+                            $row = array_pad($row, $header_count, '');
+                        } elseif ($row_count > $header_count) {
+                            // Truncate extra elements
+                            $row = array_slice($row, 0, $header_count);
+                        }
+                        $csv_data[] = array_combine($headers, $row);
+                    }
+                }
+            }
+
+            // DEBUG: Log CSV data count before updates
+            $csv_row_count = count($csv_data);
+            $last_csv_user_id = !empty($csv_data) ? ($csv_data[$csv_row_count - 1]['usr_id'] ?? 'N/A') : 'N/A';
+            $this->debugLog("DEBUG modifyStatusFileInZip: CSV has $csv_row_count rows, last user_id: $last_csv_user_id");
+
+            // Apply updates
+            $updates_applied = 0;
+            $updates_not_found = [];
+            foreach ($updates as $update) {
+                $found = false;
+                foreach ($csv_data as &$row) {
+                    if (isset($row['usr_id']) && (int)$row['usr_id'] === (int)$update['user_id']) {
+                        $row['update'] = $update['update'] ?? 0;
+                        if (isset($update['status'])) {
+                            $row['status'] = $update['status'];
+                        }
+                        $found = true;
+                        $updates_applied++;
+                        break;
+                    }
+                }
+                // CRITICAL: Unset reference to prevent PHP foreach reference bug
+                // Without this, the last element gets overwritten when iterating again
+                unset($row);
+
+                // If user not found, add new row
+                if (!$found && !empty($csv_data)) {
+                    $updates_not_found[] = $update['user_id'];
+                    $new_row = $csv_data[0]; // Copy structure from first row
+                    $new_row['usr_id'] = $update['user_id'];
+                    $new_row['update'] = $update['update'] ?? 0;
+                    if (isset($update['status'])) {
+                        $new_row['status'] = $update['status'];
+                    }
+                    $csv_data[] = $new_row;
+                }
+            }
+
+            // DEBUG: Log update results
+            $this->debugLog("DEBUG modifyStatusFileInZip: Applied $updates_applied updates, " . count($updates_not_found) . " not found in CSV");
+            if (!empty($updates_not_found)) {
+                $this->debugLog("DEBUG modifyStatusFileInZip: Users not found: " . implode(', ', $updates_not_found));
+            }
+
+            // Write modified CSV
+            if (!empty($csv_data)) {
+                $handle = fopen($status_file, 'w');
+                fputcsv($handle, array_keys($csv_data[0]), ';');
+                foreach ($csv_data as $row) {
+                    fputcsv($handle, array_values($row), ';');
+                }
+                fclose($handle);
+
+                // DEBUG: Verify written file
+                $written_content = file_get_contents($status_file);
+                $written_lines = explode("\n", trim($written_content));
+                $written_count = count($written_lines) - 1; // minus header
+                $last_written_line = end($written_lines);
+                $last_written_parts = explode(';', $last_written_line);
+                $last_written_user = $last_written_parts[1] ?? 'N/A';
+
+                // Store debug info for later retrieval
+                $this->last_csv_debug = [
+                    'written_count' => $written_count,
+                    'last_user_id' => $last_written_user,
+                    'last_3_lines' => []
+                ];
+                $last_3_lines = array_slice($written_lines, -3);
+                foreach ($last_3_lines as $line) {
+                    $parts = explode(';', $line);
+                    $this->last_csv_debug['last_3_lines'][] = [
+                        'update' => $parts[0] ?? '?',
+                        'usr_id' => $parts[1] ?? '?'
+                    ];
+                }
+            }
+
+        } elseif ($type === 'xlsx') {
+            // For xlsx, we'd need PhpSpreadsheet - simplified version for tests
+            // Just modify the file timestamp to trigger checksum change
+            if (file_exists($status_file)) {
+                touch($status_file);
+                // Append some bytes to change the checksum
+                file_put_contents($status_file, file_get_contents($status_file) . "\n");
+            }
+        }
+
+        // Create new ZIP
+        $new_zip_path = sys_get_temp_dir() . '/test_status_modified_' . uniqid() . '.zip';
+        $this->createZipFromDirectory($extract_dir, $new_zip_path);
+
+        // Cleanup extract dir
+        $this->rmdirRecursive($extract_dir);
+
+        return $new_zip_path;
+    }
+
+    /**
+     * Modifies BOTH status files (xlsx and csv) in a ZIP for content-based selection tests
+     *
+     * Allows setting different update configurations for each file to test which file gets selected
+     *
+     * @param string $zip_path Path to the ZIP file
+     * @param array $csv_updates Array of user_ids to set update=1 in CSV (empty = all stay 0)
+     * @param array $xlsx_updates Array of user_ids to set update=1 in XLSX (empty = all stay 0)
+     * @param array $status_override Optional status to set for updated users
+     * @return string Path to the modified ZIP
+     */
+    public function modifyBothStatusFilesInZip(
+        string $zip_path,
+        array $csv_updates = [],
+        array $xlsx_updates = [],
+        array $status_override = []
+    ): string {
+        $extract_dir = sys_get_temp_dir() . '/test_both_status_' . uniqid();
+        mkdir($extract_dir, 0777, true);
+
+        // Extract ZIP
+        $zip = new ZipArchive();
+        if ($zip->open($zip_path) !== true) {
+            throw new Exception("Failed to open ZIP: $zip_path");
+        }
+        $zip->extractTo($extract_dir);
+        $zip->close();
+
+        $csv_file = $extract_dir . '/status.csv';
+        $xlsx_file = $extract_dir . '/status.xlsx';
+
+        // Modify CSV
+        if (file_exists($csv_file)) {
+            $this->modifyStatusFileWithUpdates($csv_file, 'csv', $csv_updates, $status_override);
+        }
+
+        // Modify XLSX (create simple xlsx with PhpSpreadsheet if available, otherwise skip)
+        if (file_exists($xlsx_file) && class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            $this->modifyStatusFileWithUpdates($xlsx_file, 'xlsx', $xlsx_updates, $status_override);
+        }
+
+        // Create new ZIP
+        $new_zip_path = sys_get_temp_dir() . '/test_both_status_modified_' . uniqid() . '.zip';
+        $this->createZipFromDirectory($extract_dir, $new_zip_path);
+
+        // Cleanup extract dir
+        $this->rmdirRecursive($extract_dir);
+
+        return $new_zip_path;
+    }
+
+    /**
+     * Helper: Modifies a status file (csv or xlsx) setting update=1 for specific user_ids
+     */
+    private function modifyStatusFileWithUpdates(
+        string $filepath,
+        string $type,
+        array $user_ids_to_update,
+        array $status_override = []
+    ): void {
+        if ($type === 'csv') {
+            // Read CSV
+            $file_content = file_get_contents($filepath);
+            $lines = explode("\n", $file_content);
+
+            if (empty($lines)) {
+                return;
+            }
+
+            // Parse header
+            $header_line = array_shift($lines);
+            $delimiter = (substr_count($header_line, ';') > substr_count($header_line, ',')) ? ';' : ',';
+            $headers = str_getcsv($header_line, $delimiter);
+
+            // Find column indices
+            $update_idx = array_search('update', array_map('strtolower', $headers));
+            $usr_id_idx = array_search('usr_id', array_map('strtolower', $headers));
+            $status_idx = array_search('status', array_map('strtolower', $headers));
+
+            if ($update_idx === false || $usr_id_idx === false) {
+                return;
+            }
+
+            // Modify rows
+            $new_lines = [$header_line];
+            foreach ($lines as $line) {
+                if (trim($line) === '') {
+                    continue;
+                }
+
+                $row = str_getcsv($line, $delimiter);
+                if (count($row) < count($headers)) {
+                    $row = array_pad($row, count($headers), '');
+                }
+
+                $user_id = (int)($row[$usr_id_idx] ?? 0);
+
+                // Set update flag based on whether user_id is in the update list
+                $row[$update_idx] = in_array($user_id, $user_ids_to_update) ? '1' : '0';
+
+                // Apply status override if user is being updated
+                if (in_array($user_id, $user_ids_to_update) && isset($status_override['status']) && $status_idx !== false) {
+                    $row[$status_idx] = $status_override['status'];
+                }
+
+                $new_lines[] = implode($delimiter, $row);
+            }
+
+            file_put_contents($filepath, implode("\n", $new_lines));
+
+        } elseif ($type === 'xlsx' && class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            try {
+                $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($filepath);
+                $spreadsheet = $reader->load($filepath);
+                $sheet = $spreadsheet->getActiveSheet();
+
+                $highestRow = $sheet->getHighestRow();
+                $highestColumn = $sheet->getHighestColumn();
+
+                // Find column indices from header row
+                $headerRow = $sheet->rangeToArray('A1:' . $highestColumn . '1', null, true, false)[0];
+                $update_col = null;
+                $usr_id_col = null;
+                $status_col = null;
+
+                foreach ($headerRow as $i => $col) {
+                    $col_lower = strtolower(trim((string)$col));
+                    if ($col_lower === 'update') {
+                        $update_col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                    } elseif ($col_lower === 'usr_id') {
+                        $usr_id_col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                    } elseif ($col_lower === 'status') {
+                        $status_col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                    }
+                }
+
+                if ($update_col === null || $usr_id_col === null) {
+                    return;
+                }
+
+                // Modify rows
+                for ($row = 2; $row <= $highestRow; $row++) {
+                    $user_id = (int)$sheet->getCell($usr_id_col . $row)->getValue();
+
+                    // Set update flag
+                    $sheet->setCellValue($update_col . $row, in_array($user_id, $user_ids_to_update) ? 1 : 0);
+
+                    // Apply status override
+                    if (in_array($user_id, $user_ids_to_update) && isset($status_override['status']) && $status_col !== null) {
+                        $sheet->setCellValue($status_col . $row, $status_override['status']);
+                    }
+                }
+
+                // Save
+                $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
+                $writer->save($filepath);
+
+            } catch (\Exception $e) {
+                $this->debugLog("XLSX modification failed: " . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Get debug info from last CSV modification
+     */
+    public function getLastCsvDebug(): array
+    {
+        return $this->last_csv_debug;
     }
 
     /**
@@ -586,15 +1012,28 @@ class IntegrationTestHelper
             throw new Exception("Failed to create ZIP: $zip_path");
         }
 
+        // Normalize source_dir (remove trailing slash)
+        $source_dir = rtrim($source_dir, '/');
+        $source_dir_real = realpath($source_dir);
+
+        if ($source_dir_real === false) {
+            throw new Exception("Source directory does not exist: $source_dir");
+        }
+
         $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($source_dir),
+            new RecursiveDirectoryIterator($source_dir_real, RecursiveDirectoryIterator::SKIP_DOTS),
             RecursiveIteratorIterator::LEAVES_ONLY
         );
 
         foreach ($iterator as $file) {
             if (!$file->isDir()) {
                 $file_path = $file->getRealPath();
-                $relative_path = substr($file_path, strlen($source_dir) + 1);
+                // Calculate relative path correctly
+                $relative_path = substr($file_path, strlen($source_dir_real) + 1);
+
+                // Convert backslashes to forward slashes (Windows compatibility)
+                $relative_path = str_replace('\\', '/', $relative_path);
+
                 $zip->addFile($file_path, $relative_path);
             }
         }
@@ -728,6 +1167,7 @@ class IntegrationTestHelper
 
             // Process the upload
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -792,6 +1232,7 @@ class IntegrationTestHelper
 
             // Try to process this status file
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
 
             // Simulate the upload by creating a ZIP
             $zip_path = sys_get_temp_dir() . '/invalid_status_' . uniqid() . '.zip';
@@ -856,6 +1297,7 @@ class IntegrationTestHelper
             $zip_content = file_get_contents($zip_path);
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -902,6 +1344,7 @@ class IntegrationTestHelper
             $zip_content = file_get_contents($zip_path);
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -932,6 +1375,7 @@ class IntegrationTestHelper
             $fake_zip_content = 'This is not a valid ZIP file! Just random text.';
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,
@@ -970,6 +1414,7 @@ class IntegrationTestHelper
             $zip_content = file_get_contents($zip_path);
 
             $handler = new ilExFeedbackUploadHandler();
+            $handler->setSuppressUIMessages(true);
             $handler->handleFeedbackUpload([
                 'assignment_id' => $assignment->getId(),
                 'tutor_id' => 13,

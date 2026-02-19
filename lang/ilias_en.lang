@@ -87,6 +87,7 @@ error_multi_feedback_download#:#Error during multi-feedback download
 error_multi_feedback_upload#:#Error during multi-feedback upload
 error_invalid_zip#:#The uploaded file is not a valid ZIP archive
 error_zip_empty#:#The ZIP archive is empty
+error_assignment_mismatch#:#Wrong assignment: The ZIP archive was created for a different assignment. Please upload the ZIP to the correct exercise unit.
 error_no_status_files#:#No status files found in ZIP
 error_team_structure_required#:#Team assignment requires team folders
 error_individual_structure_forbidden#:#Individual assignment must not contain team folders
@@ -186,3 +187,20 @@ upload_modified_submissions_detected#:#Modified submissions detected
 upload_modified_submissions_renamed#:#modified submission(s) were automatically renamed and uploaded as feedback
 upload_renamed_file_list#:#Renamed files
 upload_modified_submission_hint#:#Note: Modified submissions were automatically renamed to make them recognizable as feedback. Please review the uploaded files.
+
+<!-- File Selection -->
+readme_file_selection_section#:#File Selection (xlsx vs. csv)
+readme_file_selection_info#:#The system automatically detects which status file you edited, based on `update=1` entries:
+readme_file_selection_csv_only#:#Only status.csv has updates → CSV is used
+readme_file_selection_xlsx_only#:#Only status.xlsx has updates → XLSX is used
+readme_file_selection_both#:#Both have updates → XLSX is preferred
+readme_file_selection_tip#:#Tip: Edit only ONE file (xlsx OR csv), not both at the same time!
+
+<!-- Plugin Configuration -->
+plugin_configuration#:#Plugin Configuration
+config_section_notifications#:#Email Notifications
+config_debug_email#:#Enable Debug Mode
+config_debug_email_info#:#In debug mode, no real emails are sent to students. Instead, all details are logged in the ILIAS log. Recommended for test systems and during setup.
+config_current_status#:#Current Status
+config_debug_mode_active#:#Debug mode active - No real emails are sent
+config_production_mode_active#:#Production mode - Emails are sent to students

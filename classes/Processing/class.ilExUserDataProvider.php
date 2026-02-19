@@ -1,62 +1,28 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/class.ilExDataProviderBase.php';
+
 /**
  * User Data Provider
- * 
+ *
  * Stellt User-Daten für Individual-Assignments bereit (analog zu Team Data Provider)
- * 
+ *
  * @author Cornel Musielak
- * @version 1.1.1
+ * @version 1.2.0
  */
-class ilExUserDataProvider
+class ilExUserDataProvider extends ilExDataProviderBase
 {
-    private ilLogger $logger;
-    private ilDBInterface $db;
-    private ?ilExerciseStatusFilePlugin $plugin = null;
-    
-    public function __construct()
+    protected function getEntityType(): string
     {
-        global $DIC;
-        $this->logger = $DIC->logger()->root();
-        $this->db = $DIC->database();
-        
-        // Plugin-Instanz für Übersetzungen - mit Fallback
-        try {
-            $plugin_id = 'exstatusfile';
-            $repo = $DIC['component.repository'];
-            $factory = $DIC['component.factory'];
+        return 'user';
+    }
 
-            $info = $repo->getPluginById($plugin_id);
-            if ($info !== null && $info->isActive()) {
-                $this->plugin = $factory->getPlugin($plugin_id);
-            }
-        } catch (Exception $e) {
-            $this->logger->warning("Could not load plugin for translations: " . $e->getMessage());
-            $this->plugin = null;
-        }
-    }
-    
-    /**
-     * Übersetzung mit Fallback
-     */
-    private function txt(string $key): string
+    protected function getErrorLoadingKey(): string
     {
-        if ($this->plugin !== null) {
-            return $this->plugin->txt($key);
-        }
-        
-        // Fallback-Übersetzungen
-        $fallbacks = [
-            'status_passed' => 'Bestanden',
-            'status_failed' => 'Nicht bestanden',
-            'status_notgraded' => 'Nicht bewertet',
-            'individual_error_loading' => 'Fehler beim Laden der Teilnehmer'
-        ];
-        
-        return $fallbacks[$key] ?? $key;
+        return 'individual_error_loading';
     }
-    
+
     /**
      * Users für Assignment laden
      */
@@ -93,7 +59,7 @@ class ilExUserDataProvider
             $submissions_map = $this->checkSubmissionsExistBatch($assignment_id, $user_ids);
 
             // PERFORMANCE: Batch-Load aller User-Status
-            $statuses_map = $this->getUserStatusesBatch($assignment_id, $user_ids);
+            $statuses_map = $this->getStatusesBatch($assignment_id, $user_ids);
 
             // Baue finale User-Daten
             $users_data = [];
@@ -122,7 +88,7 @@ class ilExUserDataProvider
             return [];
         }
     }
-    
+
     /**
      * User-Daten erstellen (mit robusterem Submission-Check)
      */
@@ -134,13 +100,13 @@ class ilExUserDataProvider
             if (!$user_data || !$user_data['login']) {
                 return null;
             }
-            
+
             // Status ermitteln
             $user_status = $this->getUserStatus($user_id, $assignment);
-            
+
             // Submission prüfen - VERBESSERTE VERSION
             $has_submission = $this->checkSubmissionExists($user_id, $assignment);
-            
+
             return [
                 'user_id' => $user_id,
                 'login' => $user_data['login'],
@@ -153,50 +119,10 @@ class ilExUserDataProvider
                 'comment' => $user_status['comment'],
                 'has_submission' => $has_submission
             ];
-            
+
         } catch (Exception $e) {
             $this->logger->error("Error building user data for user $user_id: " . $e->getMessage());
             return null;
-        }
-    }
-    
-    /**
-     * PERFORMANCE: Batch-Laden von User-Daten (analog zu TeamDataProvider)
-     *
-     * @param array $user_ids Array von User-IDs
-     * @return array Assoziatives Array: user_id => user_data
-     */
-    private function getUserDataBatch(array $user_ids): array
-    {
-        if (empty($user_ids)) {
-            return [];
-        }
-
-        try {
-            // 1 Query für ALLE User-IDs statt N einzelne Queries
-            $query = "SELECT usr_id, login, firstname, lastname
-                      FROM usr_data
-                      WHERE " . $this->db->in('usr_id', $user_ids, false, 'integer');
-
-            $result = $this->db->query($query);
-            $users = [];
-
-            while ($row = $this->db->fetchAssoc($result)) {
-                $user_id = (int)$row['usr_id'];
-                $users[$user_id] = [
-                    'user_id' => $user_id,
-                    'login' => $row['login'],
-                    'firstname' => $row['firstname'],
-                    'lastname' => $row['lastname'],
-                    'fullname' => trim($row['firstname'] . ' ' . $row['lastname'])
-                ];
-            }
-
-            return $users;
-
-        } catch (Exception $e) {
-            $this->logger->error("Batch loading user data failed: " . $e->getMessage());
-            return [];
         }
     }
 
@@ -246,47 +172,6 @@ class ilExUserDataProvider
                 $submissions[$user_id] = false;
             }
             return $submissions;
-        }
-    }
-
-    /**
-     * PERFORMANCE: Batch-Laden aller User-Status
-     *
-     * @param int $assignment_id Assignment ID
-     * @param array $user_ids Array von User-IDs
-     * @return array Assoziatives Array: user_id => status_data
-     */
-    private function getUserStatusesBatch(int $assignment_id, array $user_ids): array
-    {
-        if (empty($user_ids)) {
-            return [];
-        }
-
-        try {
-            // 1 Query für ALLE User-Status statt N einzelne Queries
-            $query = "SELECT usr_id, status, mark, notice, comment
-                      FROM exc_mem_ass_status
-                      WHERE ass_id = " . $this->db->quote($assignment_id, 'integer') . "
-                      AND " . $this->db->in('usr_id', $user_ids, false, 'integer');
-
-            $result = $this->db->query($query);
-            $statuses = [];
-
-            while ($row = $this->db->fetchAssoc($result)) {
-                $user_id = (int)$row['usr_id'];
-                $statuses[$user_id] = [
-                    'status' => $this->translateStatus($row['status'] ?? null),
-                    'mark' => $row['mark'] ?: '',
-                    'notice' => $row['notice'] ?: '',
-                    'comment' => $row['comment'] ?: ''
-                ];
-            }
-
-            return $statuses;
-
-        } catch (Exception $e) {
-            $this->logger->error("Batch loading user statuses failed: " . $e->getMessage());
-            return [];
         }
     }
 
@@ -359,7 +244,7 @@ class ilExUserDataProvider
             return $this->getDefaultStatus();
         }
     }
-    
+
     /**
      * Prüfen ob User eine Submission hat - NEUE ROBUSTE METHODE
      */
@@ -367,27 +252,27 @@ class ilExUserDataProvider
     {
         try {
             $assignment_id = $assignment->getId();
-            
+
             // Methode 1: Direkter DB-Check in exc_returned (zuverlässigste Methode)
-            $query = "SELECT COUNT(*) as cnt FROM exc_returned 
-                      WHERE ass_id = " . $this->db->quote($assignment_id, 'integer') . " 
+            $query = "SELECT COUNT(*) as cnt FROM exc_returned
+                      WHERE ass_id = " . $this->db->quote($assignment_id, 'integer') . "
                       AND user_id = " . $this->db->quote($user_id, 'integer');
-            
+
             $result = $this->db->query($query);
             if ($row = $this->db->fetchAssoc($result)) {
                 if ((int)$row['cnt'] > 0) {
                     return true;
                 }
             }
-            
+
             // Methode 2: Check über ilExSubmission Objekt
             try {
                 $submission = new \ilExSubmission($assignment, $user_id);
-                
+
                 if ($submission && $submission->hasSubmitted()) {
                     return true;
                 }
-                
+
                 // Prüfe auch Files
                 $files = $submission->getFiles();
                 if (!empty($files) && is_array($files) && count($files) > 0) {
@@ -396,7 +281,7 @@ class ilExUserDataProvider
             } catch (Exception $e) {
                 // Submission-Objekt konnte nicht erstellt werden - ignorieren
             }
-            
+
             // Methode 3: Check über MemberStatus
             try {
                 $member_status = $assignment->getMemberStatus($user_id);
@@ -408,44 +293,15 @@ class ilExUserDataProvider
             } catch (Exception $e) {
                 // MemberStatus konnte nicht geladen werden - ignorieren
             }
-            
+
             return false;
-            
+
         } catch (Exception $e) {
             $this->logger->error("Error checking submission for user $user_id in assignment {$assignment->getId()}: " . $e->getMessage());
             return false;
         }
     }
-    
-    /**
-     * Status übersetzen
-     */
-    private function translateStatus(?string $status): string
-    {
-        switch ($status) {
-            case 'passed':
-                return $this->txt('status_passed');
-            case 'failed':
-                return $this->txt('status_failed');
-            case 'notgraded':
-            default:
-                return $this->txt('status_notgraded');
-        }
-    }
-    
-    /**
-     * Standard-Status
-     */
-    private function getDefaultStatus(): array
-    {
-        return [
-            'status' => $this->txt('status_notgraded'),
-            'mark' => '',
-            'notice' => '',
-            'comment' => ''
-        ];
-    }
-    
+
     /**
      * JSON-Response für AJAX generieren
      */
@@ -454,14 +310,8 @@ class ilExUserDataProvider
         try {
             $users_data = $this->getUsersForAssignment($assignment_id);
 
-            header('Content-Type: application/json; charset=utf-8');
-            header('Cache-Control: no-cache, must-revalidate');
-            header('Expires: Sat, 26 Jul 1997 05:00:00 GMT');
-
-            // Enable Gzip compression for faster transfer
-            if (!ob_start('ob_gzhandler')) {
-                ob_start();
-            }
+            $this->sendJSONHeaders();
+            $this->startGzipCompression();
 
             echo json_encode([
                 'success' => true,
@@ -469,20 +319,10 @@ class ilExUserDataProvider
             ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
             ob_end_flush();
             exit;
-            
+
         } catch (Exception $e) {
             $this->logger->error("Error generating JSON response: " . $e->getMessage());
-            
-            header('Content-Type: application/json; charset=utf-8');
-            header('HTTP/1.1 500 Internal Server Error');
-            
-            echo json_encode([
-                'success' => false,
-                'error' => true,
-                'message' => $this->txt('individual_error_loading'),
-                'details' => $e->getMessage()
-            ], JSON_UNESCAPED_UNICODE);
-            exit;
+            $this->sendJSONErrorResponse($this->txt('individual_error_loading'), $e->getMessage());
         }
     }
 }

@@ -87,6 +87,7 @@ error_multi_feedback_download#:#Fehler beim Multi-Feedback-Download
 error_multi_feedback_upload#:#Fehler beim Multi-Feedback-Upload
 error_invalid_zip#:#Die hochgeladene Datei ist kein gültiges ZIP-Archiv
 error_zip_empty#:#Das ZIP-Archiv ist leer
+error_assignment_mismatch#:#Falsches Assignment: Das ZIP-Archiv wurde für ein anderes Assignment erstellt. Bitte laden Sie das ZIP zur korrekten Übungseinheit hoch.
 error_no_status_files#:#Keine Status-Dateien im ZIP gefunden
 error_team_structure_required#:#Team-Assignment benötigt Team-Ordner
 error_individual_structure_forbidden#:#Individual-Assignment darf keine Team-Ordner enthalten
@@ -186,3 +187,20 @@ upload_modified_submissions_detected#:#Veränderte Submissions erkannt
 upload_modified_submissions_renamed#:#veränderte Submission(s) wurden automatisch umbenannt und als Feedback hochgeladen
 upload_renamed_file_list#:#Umbenannte Dateien
 upload_modified_submission_hint#:#Hinweis: Veränderte Submissions wurden automatisch umbenannt, um sie als Feedback erkennbar zu machen. Bitte prüfen Sie die hochgeladenen Dateien.
+
+<!-- File Selection / Datei-Auswahl -->
+readme_file_selection_section#:#Datei-Auswahl (xlsx vs. csv)
+readme_file_selection_info#:#Das System erkennt automatisch, welche Status-Datei Sie bearbeitet haben, basierend auf den `update=1` Einträgen:
+readme_file_selection_csv_only#:#Enthält nur status.csv Updates → CSV wird verwendet
+readme_file_selection_xlsx_only#:#Enthält nur status.xlsx Updates → XLSX wird verwendet
+readme_file_selection_both#:#Beide haben Updates → XLSX wird bevorzugt
+readme_file_selection_tip#:#Tipp: Bearbeiten Sie nur EINE Datei (xlsx ODER csv), nicht beide gleichzeitig!
+
+<!-- Plugin Configuration -->
+plugin_configuration#:#Plugin-Konfiguration
+config_section_notifications#:#E-Mail-Benachrichtigungen
+config_debug_email#:#Debug-Modus aktivieren
+config_debug_email_info#:#Im Debug-Modus werden keine echten E-Mails an Studierende verschickt. Stattdessen werden alle Details im ILIAS-Log protokolliert. Empfohlen für Test-Systeme und während der Einrichtung.
+config_current_status#:#Aktueller Status
+config_debug_mode_active#:#Debug-Modus aktiv - Keine echten E-Mails werden verschickt
+config_production_mode_active#:#Produktiv-Modus - E-Mails werden an Studierende verschickt

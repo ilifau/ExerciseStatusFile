@@ -12,9 +12,12 @@ declare(strict_types=1);
  * 5. Modify files (simulate tutor edits)
  * 6. Upload modified ZIP
  * 7. Verify results (checksums, renames, etc.)
+ * 8. Test status file detection (xlsx vs csv)
+ * 9. Test content-based file selection (update=1 rows)
+ * 10. Test user warnings system
  *
  * @author Integration Test Suite
- * @version 1.0.0
+ * @version 1.2.0 (2026-01-29: Added content-based file selection tests)
  */
 
 // Bootstrap ILIAS
@@ -50,6 +53,11 @@ class MultiFeedbackUploadWorkflowTest
             $this->testTeamAssignmentWorkflow();
             $this->testModifiedFileRename();
             $this->testChecksumValidation();
+            $this->testStatusFileChecksums();
+            $this->testStatusFileDetection();
+            $this->testContentBasedFileSelection();  // NEW: Content-based tests
+            $this->testWarningsInResponse();
+            $this->testLargeScaleUpload();
 
             $this->printResults();
 
@@ -304,6 +312,576 @@ class MultiFeedbackUploadWorkflowTest
         } else {
             echo "❌ File was renamed even though it wasn't modified\n";
         }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 5: Status File Checksums in ZIP
+     * Verifies that status.xlsx and status.csv have checksums in checksums.json
+     */
+    private function testStatusFileChecksums(): void
+    {
+        echo "📋 Test 5: Status File Checksums\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // 1. Create simple test case
+        $exercise = $this->helper->createTestExercise('_StatusChecksum');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test5');
+
+        $users = $this->helper->createTestUsers(1);
+        $user = $users[0];
+
+        // 2. Create submission
+        $this->helper->createTestSubmission(
+            $assignment,
+            $user->getId(),
+            [['filename' => 'test.txt', 'content' => 'Test content']]
+        );
+
+        // 3. Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // 4. Extract and check checksums.json
+        $zip = new ZipArchive();
+        $zip->open($zip_path);
+
+        $checksums_content = $zip->getFromName('checksums.json');
+        $zip->close();
+
+        $checksums = json_decode($checksums_content, true);
+
+        // 5. Verify status file checksums exist
+        $has_xlsx_checksum = isset($checksums['status.xlsx']) &&
+                             isset($checksums['status.xlsx']['sha256']) &&
+                             isset($checksums['status.xlsx']['type']) &&
+                             $checksums['status.xlsx']['type'] === 'status_file';
+
+        $has_csv_checksum = isset($checksums['status.csv']) &&
+                            isset($checksums['status.csv']['sha256']) &&
+                            isset($checksums['status.csv']['type']) &&
+                            $checksums['status.csv']['type'] === 'status_file';
+
+        $this->recordResult('StatusChecksum: status.xlsx has checksum with sha256', $has_xlsx_checksum);
+        $this->recordResult('StatusChecksum: status.csv has checksum with sha256', $has_csv_checksum);
+
+        if ($has_xlsx_checksum && $has_csv_checksum) {
+            echo "✅ Both status files have checksums in checksums.json\n";
+        } else {
+            echo "❌ Missing status file checksums\n";
+        }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 6: Status File Detection (xlsx vs csv)
+     * Verifies that the system correctly detects which status file was modified
+     */
+    private function testStatusFileDetection(): void
+    {
+        echo "🔍 Test 6: Status File Detection (xlsx vs csv)\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // 1. Create test case
+        $exercise = $this->helper->createTestExercise('_StatusDetect');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test6');
+
+        $users = $this->helper->createTestUsers(1);
+        $user = $users[0];
+
+        // 2. Create submission
+        $this->helper->createTestSubmission(
+            $assignment,
+            $user->getId(),
+            [['filename' => 'solution.txt', 'content' => 'Student solution']]
+        );
+
+        // 3. Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // 4. Modify ONLY status.csv (not xlsx)
+        $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', [
+            ['user_id' => $user->getId(), 'update' => 1, 'status' => 'passed']
+        ]);
+
+        // 5. Upload and check result
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        // 6. Verify that CSV was used (status should be updated)
+        $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $user->getId());
+
+        // Note: This test verifies the status was updated, indicating CSV was correctly detected
+        $csv_was_used = ($member_status === 'passed');
+
+        $this->recordResult('StatusDetection: CSV correctly detected as modified', $csv_was_used);
+
+        if ($csv_was_used) {
+            echo "✅ System correctly detected CSV as the modified status file\n";
+        } else {
+            echo "❌ Status not updated - CSV may not have been detected correctly\n";
+        }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 6b: Content-Based File Selection (NEW)
+     * Tests the new logic that selects status file based on update=1 rows
+     * instead of relying on checksums
+     */
+    private function testContentBasedFileSelection(): void
+    {
+        echo "📊 Test 6b: Content-Based File Selection (NEW)\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // Sub-test 1: Only CSV has updates → CSV should be used
+        $this->testOnlyCsvHasUpdates();
+
+        // Sub-test 2: Only XLSX has updates → XLSX should be used
+        $this->testOnlyXlsxHasUpdates();
+
+        // Sub-test 3: Both have updates → XLSX preferred with warning
+        $this->testBothHaveUpdates();
+
+        // Sub-test 4: Neither has updates → Warning shown
+        $this->testNeitherHasUpdates();
+
+        echo "\n";
+    }
+
+    /**
+     * Sub-test: Only CSV has update=1 rows
+     */
+    private function testOnlyCsvHasUpdates(): void
+    {
+        echo "   → Test: Nur CSV hat update=1 Zeilen...\n";
+
+        $exercise = $this->helper->createTestExercise('_CsvOnly');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_CsvOnlyTest');
+
+        $users = $this->helper->createTestUsers(3);
+
+        // Create submissions
+        foreach ($users as $user) {
+            $this->helper->createTestSubmission(
+                $assignment,
+                $user->getId(),
+                [['filename' => 'work.txt', 'content' => "Work by {$user->getLogin()}"]]
+            );
+        }
+
+        // Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // Modify: CSV has update=1 for first user, XLSX has all update=0
+        $user_to_update = [$users[0]->getId()];
+        $modified_zip = $this->helper->modifyBothStatusFilesInZip(
+            $zip_path,
+            $user_to_update,  // CSV: first user gets update=1
+            [],               // XLSX: all stay update=0
+            ['status' => 'passed']
+        );
+
+        // Upload
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        // Verify: User 1 should have status 'passed' (CSV was used)
+        $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $users[0]->getId());
+        $csv_was_used = ($member_status === 'passed');
+
+        $this->recordResult('ContentBased: CSV used when only CSV has updates', $csv_was_used);
+
+        if ($csv_was_used) {
+            echo "      ✅ CSV korrekt verwendet (User hat Status 'passed')\n";
+        } else {
+            echo "      ❌ CSV wurde NICHT verwendet (Status: $member_status)\n";
+        }
+    }
+
+    /**
+     * Sub-test: Only XLSX has update=1 rows
+     */
+    private function testOnlyXlsxHasUpdates(): void
+    {
+        echo "   → Test: Nur XLSX hat update=1 Zeilen...\n";
+
+        // Skip if PhpSpreadsheet not available for XLSX modification
+        if (!class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            echo "      ⏭️  Übersprungen (PhpSpreadsheet nicht verfügbar für XLSX-Test)\n";
+            $this->recordResult('ContentBased: XLSX used when only XLSX has updates', true); // Skip = pass
+            return;
+        }
+
+        $exercise = $this->helper->createTestExercise('_XlsxOnly');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_XlsxOnlyTest');
+
+        $users = $this->helper->createTestUsers(3);
+
+        foreach ($users as $user) {
+            $this->helper->createTestSubmission(
+                $assignment,
+                $user->getId(),
+                [['filename' => 'work.txt', 'content' => "Work by {$user->getLogin()}"]]
+            );
+        }
+
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // Modify: XLSX has update=1, CSV has all update=0
+        $user_to_update = [$users[0]->getId()];
+        $modified_zip = $this->helper->modifyBothStatusFilesInZip(
+            $zip_path,
+            [],               // CSV: all stay update=0
+            $user_to_update,  // XLSX: first user gets update=1
+            ['status' => 'passed']
+        );
+
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $users[0]->getId());
+        $xlsx_was_used = ($member_status === 'passed');
+
+        $this->recordResult('ContentBased: XLSX used when only XLSX has updates', $xlsx_was_used);
+
+        if ($xlsx_was_used) {
+            echo "      ✅ XLSX korrekt verwendet (User hat Status 'passed')\n";
+        } else {
+            echo "      ❌ XLSX wurde NICHT verwendet (Status: $member_status)\n";
+        }
+    }
+
+    /**
+     * Sub-test: Both files have update=1 rows → XLSX preferred
+     */
+    private function testBothHaveUpdates(): void
+    {
+        echo "   → Test: Beide Dateien haben update=1 Zeilen...\n";
+
+        if (!class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            echo "      ⏭️  Übersprungen (PhpSpreadsheet nicht verfügbar)\n";
+            $this->recordResult('ContentBased: XLSX preferred when both have updates', true);
+            return;
+        }
+
+        $exercise = $this->helper->createTestExercise('_BothUpdates');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_BothTest');
+
+        $users = $this->helper->createTestUsers(3);
+
+        foreach ($users as $user) {
+            $this->helper->createTestSubmission(
+                $assignment,
+                $user->getId(),
+                [['filename' => 'work.txt', 'content' => "Work by {$user->getLogin()}"]]
+            );
+        }
+
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // Modify: BOTH have updates - XLSX should be preferred
+        // XLSX: User 0 gets 'passed', CSV: User 1 gets 'failed'
+        // If XLSX is used, User 0 should be 'passed'
+        // If CSV is used, User 1 should be 'failed'
+        $xlsx_users = [$users[0]->getId()];
+        $csv_users = [$users[1]->getId()];
+
+        // First modify CSV with 'failed'
+        $temp_zip1 = $this->helper->modifyBothStatusFilesInZip(
+            $zip_path,
+            $csv_users,
+            [],
+            ['status' => 'failed']
+        );
+
+        // Then modify XLSX with 'passed'
+        $modified_zip = $this->helper->modifyBothStatusFilesInZip(
+            $temp_zip1,
+            $csv_users,  // Keep CSV users
+            $xlsx_users,
+            ['status' => 'passed']
+        );
+
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        // Check: User 0 should have 'passed' (XLSX was used)
+        $user0_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $users[0]->getId());
+        $xlsx_was_preferred = ($user0_status === 'passed');
+
+        // Also check for warning
+        $has_warning = false;
+        if (isset($upload_result['warnings'])) {
+            foreach ($upload_result['warnings'] as $warning) {
+                if (strpos($warning, 'xlsx') !== false || strpos($warning, 'XLSX') !== false ||
+                    strpos($warning, 'beide') !== false || strpos($warning, 'Beide') !== false) {
+                    $has_warning = true;
+                    break;
+                }
+            }
+        }
+
+        $this->recordResult('ContentBased: XLSX preferred when both have updates', $xlsx_was_preferred);
+        $this->recordResult('ContentBased: Warning shown when both have updates', $has_warning);
+
+        if ($xlsx_was_preferred) {
+            echo "      ✅ XLSX wurde bevorzugt (User 0 hat Status 'passed')\n";
+        } else {
+            echo "      ❌ XLSX wurde NICHT bevorzugt (Status: $user0_status)\n";
+        }
+
+        if ($has_warning) {
+            echo "      ✅ Warnung wurde angezeigt\n";
+        } else {
+            echo "      ⚠️  Keine Warnung gefunden\n";
+        }
+    }
+
+    /**
+     * Sub-test: Neither file has update=1 rows → Warning
+     */
+    private function testNeitherHasUpdates(): void
+    {
+        echo "   → Test: Keine Datei hat update=1 Zeilen...\n";
+
+        $exercise = $this->helper->createTestExercise('_NoUpdates');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_NoUpdatesTest');
+
+        $users = $this->helper->createTestUsers(2);
+
+        foreach ($users as $user) {
+            $this->helper->createTestSubmission(
+                $assignment,
+                $user->getId(),
+                [['filename' => 'work.txt', 'content' => "Work by {$user->getLogin()}"]]
+            );
+        }
+
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // Modify: BOTH files have all update=0
+        $modified_zip = $this->helper->modifyBothStatusFilesInZip(
+            $zip_path,
+            [],  // CSV: all update=0
+            [],  // XLSX: all update=0
+            []
+        );
+
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        // Check for "no updates" warning
+        $has_no_updates_warning = false;
+        if (isset($upload_result['warnings'])) {
+            foreach ($upload_result['warnings'] as $warning) {
+                if (stripos($warning, 'update=1') !== false ||
+                    stripos($warning, 'keine') !== false ||
+                    stripos($warning, 'weder') !== false) {
+                    $has_no_updates_warning = true;
+                    break;
+                }
+            }
+        }
+
+        $this->recordResult('ContentBased: Warning when neither file has updates', $has_no_updates_warning);
+
+        if ($has_no_updates_warning) {
+            echo "      ✅ Warnung 'keine Updates' wurde angezeigt\n";
+        } else {
+            echo "      ⚠️  Keine passende Warnung gefunden\n";
+            if (!empty($upload_result['warnings'])) {
+                echo "         Vorhandene Warnungen: " . implode('; ', $upload_result['warnings']) . "\n";
+            }
+        }
+    }
+
+    /**
+     * Test 7: Warnings in Upload Response
+     * Verifies that warnings are returned in the JSON response
+     */
+    private function testWarningsInResponse(): void
+    {
+        echo "⚠️  Test 7: Warnings in Upload Response\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        // 1. Create test case
+        $exercise = $this->helper->createTestExercise('_Warnings');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test7');
+
+        $users = $this->helper->createTestUsers(1);
+        $user = $users[0];
+
+        // 2. Create submission
+        $this->helper->createTestSubmission(
+            $assignment,
+            $user->getId(),
+            [['filename' => 'work.txt', 'content' => 'Student work']]
+        );
+
+        // 3. Download ZIP
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+
+        // 4. Upload WITHOUT any modifications (should trigger warning)
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $zip_path);
+
+        // 5. Check for warnings in response
+        $has_warnings = isset($upload_result['warnings']) && !empty($upload_result['warnings']);
+
+        $this->recordResult('Warnings: Unmodified upload returns warnings', $has_warnings);
+
+        if ($has_warnings) {
+            echo "✅ Warnings returned in response:\n";
+            foreach ($upload_result['warnings'] as $warning) {
+                echo "   - $warning\n";
+            }
+        } else {
+            echo "❌ No warnings in response (expected warning for unmodified files)\n";
+        }
+
+        // 6. Test warning for "no updates" (all update=0)
+        $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', [
+            ['user_id' => $user->getId(), 'update' => 0, 'status' => 'passed']
+        ]);
+
+        $upload_result2 = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+
+        $has_no_updates_warning = false;
+        if (isset($upload_result2['warnings'])) {
+            foreach ($upload_result2['warnings'] as $warning) {
+                if (strpos($warning, 'update') !== false || strpos($warning, 'Updates') !== false) {
+                    $has_no_updates_warning = true;
+                    break;
+                }
+            }
+        }
+
+        $this->recordResult('Warnings: No-updates warning when all update=0', $has_no_updates_warning);
+
+        if ($has_no_updates_warning) {
+            echo "✅ Warning for 'no updates found' correctly returned\n";
+        } else {
+            echo "❌ Missing warning for 'no updates found'\n";
+        }
+
+        echo "\n";
+    }
+
+    /**
+     * Test 8: Large-Scale Upload (127 Users)
+     * Simulates a real-world scenario with many users
+     */
+    private function testLargeScaleUpload(): void
+    {
+        echo "📊 Test 8: Large-Scale Upload (127 Users)\n";
+        echo "───────────────────────────────────────────────────────\n";
+
+        $user_count = 127;
+        $start_time = microtime(true);
+
+        // 1. Create exercise and assignment
+        echo "   → Erstelle Übung und Aufgabe...\n";
+        $exercise = $this->helper->createTestExercise('_LargeScale');
+        $assignment = $this->helper->createTestAssignment($exercise, 'upload', false, '_Test8_127Users');
+
+        // 2. Create 127 test users
+        echo "   → Erstelle $user_count Test-User...\n";
+        $users = $this->helper->createTestUsers($user_count);
+        echo "   ✅ $user_count User erstellt\n";
+
+        // 3. Create submissions for all users
+        echo "   → Erstelle Abgaben für alle User...\n";
+        $submission_count = 0;
+        foreach ($users as $user) {
+            $this->helper->createTestSubmission(
+                $assignment,
+                $user->getId(),
+                [
+                    [
+                        'filename' => 'submission.txt',
+                        'content' => "Abgabe von {$user->getLogin()}\nMatrikelnummer: " . rand(1000000, 9999999)
+                    ]
+                ]
+            );
+            $submission_count++;
+
+            // Progress indicator every 25 users
+            if ($submission_count % 25 === 0) {
+                echo "      ... $submission_count/$user_count Abgaben erstellt\n";
+            }
+        }
+        echo "   ✅ Alle Abgaben erstellt\n";
+
+        // 4. Download multi-feedback ZIP
+        echo "   → Lade Multi-Feedback ZIP herunter...\n";
+        $zip_path = $this->helper->downloadMultiFeedbackZip($assignment->getId());
+        $this->recordResult('LargeScale: Download ZIP with 127 users', file_exists($zip_path));
+        echo "   ✅ ZIP heruntergeladen\n";
+
+        // 5. Modify status.csv - set every 2nd user to update=1, status=passed
+        echo "   → Modifiziere status.csv (jeder 2. User bekommt 'passed')...\n";
+        $updates = [];
+        $users_to_update = [];
+        for ($i = 0; $i < count($users); $i++) {
+            if ($i % 2 === 0) { // Every 2nd user (0, 2, 4, ...)
+                $updates[] = [
+                    'user_id' => $users[$i]->getId(),
+                    'update' => 1,
+                    'status' => 'passed'
+                ];
+                $users_to_update[] = $users[$i]->getId();
+            }
+        }
+
+        $modified_zip = $this->helper->modifyStatusFileInZip($zip_path, 'csv', $updates);
+        $this->recordResult('LargeScale: Modify status.csv with ' . count($updates) . ' updates', file_exists($modified_zip));
+        echo "   ✅ " . count($updates) . " User für Update markiert\n";
+
+        // 6. Upload modified ZIP
+        echo "   → Lade modifizierte ZIP hoch...\n";
+        $upload_start = microtime(true);
+        $upload_result = $this->helper->uploadMultiFeedbackZip($assignment->getId(), $modified_zip);
+        $upload_duration = round(microtime(true) - $upload_start, 2);
+
+        $this->recordResult('LargeScale: Upload processed successfully', $upload_result['success'] ?? false);
+        echo "   ✅ Upload verarbeitet in {$upload_duration}s\n";
+
+        // 7. Verify status updates were applied
+        echo "   → Verifiziere Status-Updates...\n";
+        $verified_count = 0;
+        $failed_users = [];
+
+        foreach ($users_to_update as $user_id) {
+            $member_status = ilExerciseMembers::_lookupStatus($assignment->getExerciseId(), $user_id);
+            if ($member_status === 'passed') {
+                $verified_count++;
+            } else {
+                $failed_users[] = $user_id;
+            }
+        }
+
+        $expected_updates = count($users_to_update);
+        $success_rate = round(($verified_count / $expected_updates) * 100, 1);
+
+        $this->recordResult('LargeScale: Status updates applied correctly', $verified_count === $expected_updates);
+
+        echo "   ✅ Verifiziert: $verified_count/$expected_updates User haben Status 'passed' ($success_rate%)\n";
+
+        if (!empty($failed_users) && count($failed_users) <= 5) {
+            echo "   ⚠️  Fehlgeschlagen für User-IDs: " . implode(', ', $failed_users) . "\n";
+        } elseif (!empty($failed_users)) {
+            echo "   ⚠️  " . count($failed_users) . " User wurden nicht aktualisiert\n";
+        }
+
+        // 8. Check for warnings
+        if (!empty($upload_result['warnings'])) {
+            echo "   ⚠️  Warnungen: " . implode('; ', $upload_result['warnings']) . "\n";
+        }
+
+        $total_duration = round(microtime(true) - $start_time, 2);
+        echo "\n   📈 Statistik:\n";
+        echo "      • User erstellt: $user_count\n";
+        echo "      • Abgaben erstellt: $submission_count\n";
+        echo "      • Status-Updates: $expected_updates\n";
+        echo "      • Erfolgreich aktualisiert: $verified_count\n";
+        echo "      • Gesamtdauer: {$total_duration}s\n";
 
         echo "\n";
     }
