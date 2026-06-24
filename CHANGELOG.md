@@ -21,6 +21,16 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 - `team_ids` **und** `user_ids` akzeptieren jetzt String **und** Array (rückwärtskompatibel)
 - Details: `ki_infos/kitchensink_modal_poc_2026_06_24.md`
 
+### Entfernt
+
+- **Alter Eigenbau-„Multi-Feedback"-Button** (Team + Individual) inkl. der per JS
+  injizierten ~1400 Zeilen Modal-Code (`renderTeamButton`/`renderIndividualButton`,
+  `registerGlobalJavaScriptFunctions`, `addCustomCSS` werden nicht mehr aufgerufen)
+- Toter Code `getAssignmentInfo()` entfernt
+- **⚠️ Folge:** Der **Upload** lief über genau dieses alte Modal und ist damit
+  **vorübergehend nicht verfügbar**, bis er auf KitchenSink migriert ist
+  (nächster Schritt). „Run Tests" (Admin) bleibt unverändert.
+
 ## [1.3.0] - 2026-01-28
 
 ### Hinzugefügt
