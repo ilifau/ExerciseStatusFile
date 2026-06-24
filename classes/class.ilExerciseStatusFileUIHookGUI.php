@@ -4,6 +4,7 @@ declare(strict_types=1);
 // Includes für alle Plugin-Klassen
 require_once __DIR__ . '/Detection/class.ilExAssignmentDetector.php';
 require_once __DIR__ . '/UI/class.ilExTeamButtonRenderer.php';
+require_once __DIR__ . '/UI/class.ilExKsMultiFeedbackModal.php';
 require_once __DIR__ . '/Processing/class.ilExFeedbackDownloadHandler.php';
 require_once __DIR__ . '/Processing/class.ilExFeedbackUploadHandler.php';
 require_once __DIR__ . '/Processing/class.ilExTeamDataProvider.php';
@@ -96,6 +97,49 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     {
         $return = ["mode" => ilUIHookPluginGUI::KEEP, "html" => ""];
 
+        // PoC: native KitchenSink button + RoundTrip modal for team multi-feedback.
+        // The button is injected as a real toolbar item (inline with the native
+        // buttons) and the modal overlay is appended after the toolbar. This
+        // happens at render time, so the KS ->withOnClick(getShowSignal())
+        // binding works without any custom JS.
+        //
+        // We deliberately target ONLY the main exercise toolbar - the one that
+        // carries the native "download all submissions" action. Matching on that
+        // marker (instead of a one-shot guard) makes us independent of the order
+        // in which the several toolbars on the page render, and is safe against
+        // ILIAS' double html generation on REPLACE (the marker is always there,
+        // the result is idempotent).
+        if ($a_part === "template_get"
+            && ($a_par["tpl_id"] ?? "") === "Services/UIComponent/Toolbar/tpl.toolbar.html"
+        ) {
+            $toolbar_html = $a_par["html"] ?? "";
+
+            // Anchor on the native "download all submissions" button: it marks
+            // the main exercise toolbar (order-independent, idempotent) and is
+            // the natural neighbour for our download action.
+            $marker = 'name="cmd[downloadSubmissions]"';
+            $marker_pos = $toolbar_html !== "" ? strpos($toolbar_html, $marker) : false;
+
+            if ($marker_pos !== false) {
+                $parts = $this->renderKsTeamModal();
+                if (!empty($parts)) {
+                    // Insert the KS button right after the "download all
+                    // submissions" <input>, inside the same navbar-form, so it
+                    // sits next to that button instead of at the toolbar start.
+                    $tag_end = strpos($toolbar_html, ">", $marker_pos);
+                    if ($tag_end !== false) {
+                        $insert_at = $tag_end + 1;
+                        $new_html = substr($toolbar_html, 0, $insert_at)
+                            . $parts["button"]
+                            . substr($toolbar_html, $insert_at)
+                            . $parts["modal"];
+
+                        return ["mode" => ilUIHookPluginGUI::REPLACE, "html" => $new_html];
+                    }
+                }
+            }
+        }
+
         // AJAX-Requests werden bereits in modifyGUI() -> handleAJAXRequests() abgefangen
         // Hier nur noch die Hook-spezifischen Hooks verarbeiten
 
@@ -111,6 +155,55 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
         }
 
         return $return;
+    }
+
+    /**
+     * Render the native KitchenSink team multi-feedback button + modal, but
+     * only in the exercise members view of a team assignment the current user
+     * may grade. Returns an empty array in every other context.
+     *
+     * @return array{button: string, modal: string}|array{}
+     */
+    private function renderKsTeamModal(): array
+    {
+        try {
+            global $DIC;
+
+            if (!isset($DIC["ilCtrl"], $DIC["ui.factory"], $DIC["tpl"])) {
+                return [];
+            }
+
+            $ctrl = $DIC->ctrl();
+            if (strtolower($ctrl->getCmdClass()) !== "ilexercisemanagementgui"
+                || $ctrl->getCmd() !== "members"
+            ) {
+                return [];
+            }
+
+            $detector = new ilExAssignmentDetector();
+            $assignment_id = $detector->detectAssignmentId();
+            if ($assignment_id === null) {
+                return [];
+            }
+
+            // Team assignments only (PoC scope).
+            $assignment = new \ilExAssignment($assignment_id);
+            if (!$assignment->getAssignmentType()->usesTeams()) {
+                return [];
+            }
+
+            // Same access gate as the download backend.
+            if (!$this->checkAssignmentAccess($assignment_id)) {
+                return [];
+            }
+
+            $modal = new ilExKsMultiFeedbackModal($this->plugin);
+            return $modal->renderTeamDownload($assignment_id);
+
+        } catch (Exception $e) {
+            $this->logger->error("KS modal render error: " . $e->getMessage());
+            return [];
+        }
     }
 
     /**
@@ -345,7 +438,12 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     {
         try {
             $assignment_id = $_POST['ass_id'] ?? null;
-            $team_ids_string = $_POST['team_ids'] ?? '';
+            $team_ids_raw = $_POST['team_ids'] ?? '';
+            // Accept both the legacy comma-separated string (custom JS modal)
+            // and an array of ids (native KitchenSink checkbox form).
+            $team_ids_string = is_array($team_ids_raw)
+                ? implode(',', $team_ids_raw)
+                : $team_ids_raw;
 
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Ungültige Assignment-ID");

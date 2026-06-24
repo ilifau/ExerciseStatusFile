@@ -4,6 +4,21 @@ Alle wichtigen Änderungen am ExerciseStatusFile Plugin werden in dieser Datei d
 
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [Unreleased] — Branch `ks-multifeedback-modal`
+
+### Hinzugefügt (Proof of Concept)
+
+#### Team-Multi-Feedback-Modal auf KitchenSink umgestellt
+- **Neuer Button „Multi-Feedback (KS)"** parallel zum bestehenden Eigenbau-Modal
+- Natives ILIAS-9-**RoundTrip-Modal** statt selbstgebautem HTML/JavaScript
+- Trigger über `button()->withOnClick($modal->getShowSignal())` — **kein AJAX,
+  kein custom JS** (exakt das Core-Pattern aus `ilExerciseManagementGUI`)
+- Einhängung per `template_get`-UIHook (APPEND hinter die Toolbar), damit die
+  KS-Bindings zur Render-Zeit greifen
+- Neue Klasse `classes/UI/class.ilExKsMultiFeedbackModal.php`
+- `team_ids`-Verarbeitung akzeptiert jetzt String **und** Array (rückwärtskompatibel)
+- Details: `ki_infos/kitchensink_modal_poc_2026_06_24.md`
+
 ## [1.3.0] - 2026-01-28
 
 ### Hinzugefügt

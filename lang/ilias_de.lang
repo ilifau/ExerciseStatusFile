@@ -101,6 +101,7 @@ status_notgraded#:#Nicht bewertet
 
 <!-- Buttons -->
 btn_multi_feedback#:#Multi-Feedback
+btn_multi_feedback_ks#:#Multi-Feedback (KS)
 btn_download#:#Download
 btn_upload#:#Upload
 btn_close#:#Schließen
