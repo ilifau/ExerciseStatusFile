@@ -97,7 +97,8 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     {
         $return = ["mode" => ilUIHookPluginGUI::KEEP, "html" => ""];
 
-        // PoC: native KitchenSink button + RoundTrip modal for team multi-feedback.
+        // PoC: native KitchenSink button + RoundTrip modal for multi-feedback
+        // download (team or individual, decided in renderKsDownloadModal()).
         // The button is injected as a real toolbar item (inline with the native
         // buttons) and the modal overlay is appended after the toolbar. This
         // happens at render time, so the KS ->withOnClick(getShowSignal())
@@ -121,7 +122,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             $marker_pos = $toolbar_html !== "" ? strpos($toolbar_html, $marker) : false;
 
             if ($marker_pos !== false) {
-                $parts = $this->renderKsTeamModal();
+                $parts = $this->renderKsDownloadModal();
                 if (!empty($parts)) {
                     // Insert the KS button right after the "download all
                     // submissions" <input>, inside the same navbar-form, so it
@@ -158,13 +159,14 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     }
 
     /**
-     * Render the native KitchenSink team multi-feedback button + modal, but
-     * only in the exercise members view of a team assignment the current user
-     * may grade. Returns an empty array in every other context.
+     * Render the native KitchenSink multi-feedback button + modal for the
+     * download, but only in the exercise members view of an assignment the
+     * current user may grade. Picks the team or individual variant based on the
+     * assignment type. Returns an empty array in every other context.
      *
      * @return array{button: string, modal: string}|array{}
      */
-    private function renderKsTeamModal(): array
+    private function renderKsDownloadModal(): array
     {
         try {
             global $DIC;
@@ -186,19 +188,19 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 return [];
             }
 
-            // Team assignments only (PoC scope).
-            $assignment = new \ilExAssignment($assignment_id);
-            if (!$assignment->getAssignmentType()->usesTeams()) {
-                return [];
-            }
-
             // Same access gate as the download backend.
             if (!$this->checkAssignmentAccess($assignment_id)) {
                 return [];
             }
 
+            $assignment = new \ilExAssignment($assignment_id);
             $modal = new ilExKsMultiFeedbackModal($this->plugin);
-            return $modal->renderTeamDownload($assignment_id);
+
+            if ($assignment->getAssignmentType()->usesTeams()) {
+                return $modal->renderTeamDownload($assignment_id);
+            }
+
+            return $modal->renderIndividualDownload($assignment_id);
 
         } catch (Exception $e) {
             $this->logger->error("KS modal render error: " . $e->getMessage());
@@ -690,7 +692,12 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     {
         try {
             $assignment_id = $_POST['ass_id'] ?? null;
-            $user_ids_string = $_POST['user_ids'] ?? '';
+            $user_ids_raw = $_POST['user_ids'] ?? '';
+            // Accept both the legacy comma-separated string (custom JS modal)
+            // and an array of ids (native KitchenSink checkbox form).
+            $user_ids_string = is_array($user_ids_raw)
+                ? implode(',', $user_ids_raw)
+                : $user_ids_raw;
 
             if (!$assignment_id || !is_numeric($assignment_id)) {
                 throw new Exception("Invalid assignment ID");

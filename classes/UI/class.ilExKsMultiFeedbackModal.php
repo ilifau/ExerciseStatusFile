@@ -31,7 +31,7 @@ class ilExKsMultiFeedbackModal
     }
 
     /**
-     * Build the KitchenSink button + RoundTrip modal for a team assignment.
+     * Build the KitchenSink button + RoundTrip modal for a TEAM assignment.
      *
      * Returns the button and the modal HTML *separately* so the caller can
      * place the button inline as a real toolbar item while the modal overlay
@@ -42,13 +42,45 @@ class ilExKsMultiFeedbackModal
      */
     public function renderTeamDownload(int $assignment_id): array
     {
-        global $DIC;
-
-        $provider = new ilExTeamDataProvider();
-        $teams = $provider->getTeamsForAssignment($assignment_id);
+        $teams = (new ilExTeamDataProvider())->getTeamsForAssignment($assignment_id);
         if (empty($teams)) {
             return [];
         }
+
+        return $this->buildButtonAndModal(
+            $this->buildTeamSelectionForm($assignment_id, $teams)
+        );
+    }
+
+    /**
+     * Build the KitchenSink button + RoundTrip modal for an INDIVIDUAL
+     * assignment. Mirror of renderTeamDownload(), but with a user selection and
+     * the individual download backend.
+     *
+     * @return array{button: string, modal: string}|array{}
+     */
+    public function renderIndividualDownload(int $assignment_id): array
+    {
+        $users = (new ilExUserDataProvider())->getUsersForAssignment($assignment_id);
+        if (empty($users)) {
+            return [];
+        }
+
+        return $this->buildButtonAndModal(
+            $this->buildIndividualSelectionForm($assignment_id, $users)
+        );
+    }
+
+    /**
+     * Wrap the given form HTML in a native KitchenSink RoundTrip modal and a
+     * button that opens it. Same pattern as ILIAS core (ilExerciseManagementGUI):
+     * the button's onClick fires the modal's show signal - no AJAX, no custom JS.
+     *
+     * @return array{button: string, modal: string}
+     */
+    private function buildButtonAndModal(string $form_html): array
+    {
+        global $DIC;
 
         $ui = $DIC->ui();
         $factory = $ui->factory();
@@ -56,16 +88,10 @@ class ilExKsMultiFeedbackModal
 
         $label = $this->plugin->txt('btn_multi_feedback_ks');
 
-        // Modal body: native POST form -> existing download backend -> ZIP.
-        $form_html = $this->buildSelectionForm($assignment_id, $teams);
-
         $modal = $factory->modal()->roundtrip(
             $label,
             [$factory->legacy($form_html)]
         );
-
-        // Same pattern as ILIAS core (ilExerciseManagementGUI): the button's
-        // onClick fires the modal's show signal.
         $button = $factory->button()->standard($label, '#')
             ->withOnClick($modal->getShowSignal());
 
@@ -75,17 +101,8 @@ class ilExKsMultiFeedbackModal
         ];
     }
 
-    /**
-     * Minimal native selection form. This is the only remaining piece of custom
-     * markup; in a full rollout it would become a KS-routed form. It is kept
-     * native here because the download response is a streamed ZIP.
-     */
-    private function buildSelectionForm(int $assignment_id, array $teams): string
+    private function buildTeamSelectionForm(int $assignment_id, array $teams): string
     {
-        $action = htmlspecialchars($_SERVER['REQUEST_URI'] ?? '', ENT_QUOTES);
-        $intro = htmlspecialchars($this->plugin->txt('team_select_for_download'), ENT_QUOTES);
-        $submit_label = htmlspecialchars($this->plugin->txt('btn_start_download'), ENT_QUOTES);
-
         $rows = '';
         foreach ($teams as $team) {
             $team_id = (int) ($team['team_id'] ?? 0);
@@ -93,11 +110,10 @@ class ilExKsMultiFeedbackModal
                 continue;
             }
 
-            $names = array_map(
+            $names = array_filter(array_map(
                 static fn(array $member): string => (string) ($member['fullname'] ?? ''),
                 $team['members'] ?? []
-            );
-            $names = array_filter($names);
+            ));
 
             $label = sprintf(
                 'Team %d — %s (%s)',
@@ -106,15 +122,57 @@ class ilExKsMultiFeedbackModal
                 (string) ($team['status'] ?? '')
             );
 
-            $rows .= '<div class="form-check" style="margin-bottom:6px;">'
-                . '<label style="font-weight:normal;cursor:pointer;">'
-                . '<input type="checkbox" name="team_ids[]" value="' . $team_id . '"> '
-                . htmlspecialchars($label, ENT_QUOTES)
-                . '</label></div>';
+            $rows .= $this->checkboxRow('team_ids', $team_id, $label);
         }
 
+        return $this->buildForm('multi_feedback_download', $assignment_id, $rows, 'team_select_for_download');
+    }
+
+    private function buildIndividualSelectionForm(int $assignment_id, array $users): string
+    {
+        $rows = '';
+        foreach ($users as $user) {
+            $user_id = (int) ($user['user_id'] ?? 0);
+            if ($user_id <= 0) {
+                continue;
+            }
+
+            $label = sprintf(
+                '%s (%s) — %s',
+                (string) ($user['fullname'] ?? ''),
+                (string) ($user['login'] ?? ''),
+                (string) ($user['status'] ?? '')
+            );
+
+            $rows .= $this->checkboxRow('user_ids', $user_id, $label);
+        }
+
+        return $this->buildForm('multi_feedback_download_individual', $assignment_id, $rows, 'individual_select_for_download');
+    }
+
+    private function checkboxRow(string $field, int $value, string $label): string
+    {
+        return '<div class="form-check" style="margin-bottom:6px;">'
+            . '<label style="font-weight:normal;cursor:pointer;">'
+            . '<input type="checkbox" name="' . $field . '[]" value="' . $value . '"> '
+            . htmlspecialchars($label, ENT_QUOTES)
+            . '</label></div>';
+    }
+
+    /**
+     * Minimal native selection form. This is the only remaining piece of custom
+     * markup; in a full rollout it would become a KS-routed form. It is kept
+     * native here because the download response is a streamed ZIP, which a KS
+     * async modal submit cannot trigger as a browser download.
+     */
+    private function buildForm(string $plugin_action, int $assignment_id, string $rows, string $intro_key): string
+    {
+        $action = htmlspecialchars($_SERVER['REQUEST_URI'] ?? '', ENT_QUOTES);
+        $intro = htmlspecialchars($this->plugin->txt($intro_key), ENT_QUOTES);
+        $submit_label = htmlspecialchars($this->plugin->txt('btn_start_download'), ENT_QUOTES);
+
         return '<form method="post" action="' . $action . '">'
-            . '<input type="hidden" name="plugin_action" value="multi_feedback_download">'
+            . '<input type="hidden" name="plugin_action" value="' . htmlspecialchars($plugin_action, ENT_QUOTES) . '">'
             . '<input type="hidden" name="ass_id" value="' . $assignment_id . '">'
             . '<p>' . $intro . '</p>'
             . '<div style="margin-bottom:16px;">' . $rows . '</div>'
