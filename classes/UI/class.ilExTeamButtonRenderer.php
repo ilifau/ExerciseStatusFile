@@ -46,7 +46,12 @@ class ilExTeamButtonRenderer
             'modal_download' => $this->plugin->txt('modal_download_tab'),
             'modal_upload' => $this->plugin->txt('modal_upload_tab'),
             'modal_close' => $this->plugin->txt('modal_close_btn'),
-            
+
+            // Tab descriptions (per-tab guidance shown above the controls)
+            'tab_desc_download_team' => $this->plugin->txt('tab_desc_download_team'),
+            'tab_desc_download_individual' => $this->plugin->txt('tab_desc_download_individual'),
+            'tab_desc_upload' => $this->plugin->txt('tab_desc_upload'),
+
             // Team
             'team_loading' => $this->plugin->txt('team_loading'),
             'team_select_for_download' => $this->plugin->txt('team_select_for_download'),
@@ -155,6 +160,9 @@ class ilExTeamButtonRenderer
                             
                             "<div style=\"padding: 20px; max-height: 70vh; overflow-y: auto;\">" +
                                 "<div id=\"download-content\">" +
+                                    "<div style=\"background: #e7f3fe; border-left: 4px solid #007bff; padding: 12px 15px; border-radius: 4px; margin-bottom: 18px; color: #31708f; font-size: 14px; line-height: 1.5;\">" +
+                                        "' . $txt['tab_desc_download_team'] . '" +
+                                    "</div>" +
                                     "<div id=\"team-loading\" style=\"text-align: center; padding: 20px;\">" +
                                         "<div style=\"font-size: 2em; margin-bottom: 10px;\">⏳</div>" +
                                         "<p>' . $txt['team_loading'] . '</p>" +
@@ -180,6 +188,9 @@ class ilExTeamButtonRenderer
                                 
                                 "<div id=\"upload-content\" style=\"display: none;\">" +
                                     "<h4 style=\"margin-top: 0; color: #28a745;\">📤 ' . $txt['upload_title'] . '</h4>" +
+                                    "<div style=\"background: #eaf7ee; border-left: 4px solid #28a745; padding: 12px 15px; border-radius: 4px; margin-bottom: 18px; color: #2e5e3a; font-size: 14px; line-height: 1.5;\">" +
+                                        "' . $txt['tab_desc_upload'] . '" +
+                                    "</div>" +
                                     "<div style=\"border: 2px dashed #28a745; border-radius: 8px; padding: 30px; text-align: center; margin-bottom: 20px;\">" +
                                         "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 15px;\">📁</div>" +
                                         "<input type=\"file\" id=\"upload-file\" accept=\".zip\" style=\"display: none;\" onchange=\"window.ExerciseStatusFilePlugin.handleFileSelect()\">" +
@@ -857,6 +868,9 @@ class ilExTeamButtonRenderer
                             
                             "<div style=\"padding: 20px; max-height: 70vh; overflow-y: auto;\">" +
                                 "<div id=\"individual-download-content\">" +
+                                    "<div style=\"background: #e7f3fe; border-left: 4px solid #007bff; padding: 12px 15px; border-radius: 4px; margin-bottom: 18px; color: #31708f; font-size: 14px; line-height: 1.5;\">" +
+                                        "' . $txt['tab_desc_download_individual'] . '" +
+                                    "</div>" +
                                     "<div id=\"individual-loading\" style=\"text-align: center; padding: 20px;\">" +
                                         "<div style=\"font-size: 2em; margin-bottom: 10px;\">⏳</div>" +
                                         "<p>' . $txt['individual_loading'] . '</p>" +
@@ -882,6 +896,9 @@ class ilExTeamButtonRenderer
                                 
                                 "<div id=\"individual-upload-content\" style=\"display: none;\">" +
                                     "<h4 style=\"margin-top: 0; color: #28a745;\">📤 ' . $txt['upload_title'] . '</h4>" +
+                                    "<div style=\"background: #eaf7ee; border-left: 4px solid #28a745; padding: 12px 15px; border-radius: 4px; margin-bottom: 18px; color: #2e5e3a; font-size: 14px; line-height: 1.5;\">" +
+                                        "' . $txt['tab_desc_upload'] . '" +
+                                    "</div>" +
                                     "<div style=\"border: 2px dashed #28a745; border-radius: 8px; padding: 30px; text-align: center; margin-bottom: 20px;\">" +
                                         "<div style=\"font-size: 48px; color: #28a745; margin-bottom: 15px;\">📁</div>" +
                                         "<input type=\"file\" id=\"individual-upload-file\" accept=\".zip\" style=\"display: none;\" onchange=\"window.ExerciseStatusFilePlugin.handleIndividualFileSelect()\">" +

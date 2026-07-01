@@ -8,6 +8,9 @@ status_processing_error#:#Fehler beim Verarbeiten der Status-Dateien
 modal_download_tab#:#Download
 modal_upload_tab#:#Upload
 modal_close_btn#:#Schließen
+tab_desc_download_team#:#In diesem Tab laden Sie die Abgaben ausgewählter Teams als ZIP herunter – inklusive einer Status-Datei (Excel/CSV) zum Bewerten und einer README mit Anleitung. Bearbeiten Sie alles offline und laden Sie das ZIP anschließend im Tab „Upload“ wieder hoch.
+tab_desc_download_individual#:#In diesem Tab laden Sie die Abgaben ausgewählter Teilnehmer als ZIP herunter – inklusive einer Status-Datei (Excel/CSV) zum Bewerten und einer README mit Anleitung. Bearbeiten Sie alles offline und laden Sie das ZIP anschließend im Tab „Upload“ wieder hoch.
+tab_desc_upload#:#Laden Sie hier das zuvor heruntergeladene und bearbeitete ZIP wieder hoch. Feedback-Dateien, die Sie in die Personen-Ordner gelegt haben, werden den Abgaben zugeordnet; die Status-Datei aktualisiert Noten und Status. Wichtig: Feedback-Dateien müssen anders heißen als die Original-Abgaben, sonst werden sie herausgefiltert.
 
 <!-- Team Multi-Feedback -->
 team_multi_feedback_title#:#Multi-Feedback (Teams)

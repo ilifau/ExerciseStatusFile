@@ -8,6 +8,9 @@ status_processing_error#:#Error processing status files
 modal_download_tab#:#Download
 modal_upload_tab#:#Upload
 modal_close_btn#:#Close
+tab_desc_download_team#:#In this tab you download the submissions of the selected teams as a ZIP – including a status file (Excel/CSV) for grading and a README with instructions. Edit everything offline, then upload the same ZIP again in the 'Upload' tab.
+tab_desc_download_individual#:#In this tab you download the submissions of the selected participants as a ZIP – including a status file (Excel/CSV) for grading and a README with instructions. Edit everything offline, then upload the same ZIP again in the 'Upload' tab.
+tab_desc_upload#:#Upload the ZIP you previously downloaded and edited. Feedback files you placed in the participant folders are attached to the submissions; the status file updates grades and status. Important: feedback files must have different names than the original submissions, otherwise they are filtered out.
 
 <!-- Team Multi-Feedback -->
 team_multi_feedback_title#:#Multi-Feedback (Teams)
