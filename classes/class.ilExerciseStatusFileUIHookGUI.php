@@ -90,6 +90,33 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     }
 
     /**
+     * Returns the per-session CSRF token, creating it on first use. Embedded in
+     * the modal JavaScript at render time and sent back with every
+     * state-changing request (see verifyCsrfToken()).
+     */
+    public static function getCsrfToken(): string
+    {
+        if (empty($_SESSION['exsf_csrf_token']) || !is_string($_SESSION['exsf_csrf_token'])) {
+            $_SESSION['exsf_csrf_token'] = bin2hex(random_bytes(32));
+        }
+        return $_SESSION['exsf_csrf_token'];
+    }
+
+    /**
+     * Constant-time comparison of the submitted CSRF token against the session
+     * token. Guards the state-changing POST endpoints against cross-site
+     * request forgery.
+     */
+    private function verifyCsrfToken(): bool
+    {
+        $expected = $_SESSION['exsf_csrf_token'] ?? '';
+        $provided = $_POST['csrf_token'] ?? '';
+
+        return is_string($expected) && $expected !== ''
+            && is_string($provided) && hash_equals($expected, $provided);
+    }
+
+    /**
      * HTML-Hook Processing mit Multi-Feedback Download Support
      */
     public function getHTML(string $a_comp, string $a_part, array $a_par = []): array
@@ -182,7 +209,21 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
         }
         
         $plugin_action = $_GET['plugin_action'] ?? $_POST['plugin_action'] ?? null;
-        
+
+        // CSRF: state-changing POST endpoints must carry a valid session token.
+        // Read-only GET endpoints (get_teams/get_individual_users) are exempt -
+        // the same-origin policy stops a foreign page from reading their result.
+        $csrf_protected = [
+            'multi_feedback_upload',
+            'multi_feedback_download',
+            'multi_feedback_download_individual',
+        ];
+        if (in_array($plugin_action, $csrf_protected, true) && !$this->verifyCsrfToken()) {
+            $this->logger->warning("CSRF token check failed for action: " . $plugin_action);
+            $this->sendAccessDeniedResponse();
+            return true;
+        }
+
         switch ($plugin_action) {
             case 'get_teams':
                 $this->handleGetTeamsRequest();
@@ -246,8 +287,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             
             echo json_encode([
                 'error' => true,
-                'message' => 'Fehler beim Laden der Team-Daten',
-                'details' => $e->getMessage()
+                'message' => 'Fehler beim Laden der Team-Daten'
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -262,7 +302,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             $assignment_id = $_POST['ass_id'] ?? null;
 
             if (!$assignment_id || !is_numeric($assignment_id)) {
-                throw new Exception("Invalid assignment ID: " . var_export($assignment_id, true));
+                throw new Exception("Invalid assignment ID");
             }
 
             // Sicherheitsprüfung: Hat User Bewertungsrechte?
@@ -331,8 +371,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             echo json_encode([
                 'success' => false,
                 'error' => true,
-                'message' => $e->getMessage(),
-                'error_details' => $e->getMessage()
+                'message' => $e->getMessage()
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -380,8 +419,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
 
             echo json_encode([
                 'success' => false,
-                'message' => 'Fehler beim Multi-Feedback-Download',
-                'details' => $e->getMessage()
+                'message' => 'Fehler beim Multi-Feedback-Download'
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -578,8 +616,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             echo json_encode([
                 'success' => false,
                 'error' => true,
-                'message' => 'Fehler beim Laden der User-Daten',
-                'details' => $e->getMessage()
+                'message' => 'Fehler beim Laden der User-Daten'
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -630,7 +667,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             echo json_encode([
                 'success' => false,
                 'error' => true,
-                'message' => "Fehler beim Individual Multi-Feedback-Download: " . $e->getMessage()
+                'message' => 'Fehler beim Individual Multi-Feedback-Download'
             ], JSON_UNESCAPED_UNICODE);
 
             exit;

@@ -30,6 +30,7 @@ class IntegrationTestRunner
             $this->runCSVStatusFileTests();
             $this->runTeamNotificationTests();
             $this->runNegativeTests();
+            $this->runSecurityTests();
             $this->runLargeScaleTest();
             $this->runLargeScaleFullUpdateTest();
 
@@ -1056,6 +1057,194 @@ class IntegrationTestRunner
         }
 
         return false; // Default: production mode
+    }
+
+    /**
+     * Security hardening regression tests. These exercise the security-critical
+     * helpers directly (via reflection) so the guarantees stay locked in:
+     *   #2 CSRF token check, #6 spreadsheet formula neutralisation,
+     *   #4 zip-slip containment, #3 zip-bomb rejection.
+     * Pure logic - no test exercise/user objects required.
+     */
+    public function runSecurityTests(): void
+    {
+        echo "🔒 Test 8: Security Hardening\n";
+        echo "───────────────────────────────────────────────────────\n\n";
+
+        $this->testCsrfTokenValidation();
+        $this->testFormulaInjectionNeutralized();
+        $this->testZipSlipContained();
+        $this->testZipBombRejected();
+
+        echo "\n";
+    }
+
+    /** #2 CSRF: matching token passes, wrong/missing token is rejected. */
+    private function testCsrfTokenValidation(): void
+    {
+        echo "→ Security 1: CSRF-Token-Validierung\n";
+
+        $saved_session = $_SESSION['exsf_csrf_token'] ?? null;
+        $saved_post = $_POST['csrf_token'] ?? null;
+
+        try {
+            $ref = new \ReflectionClass('ilExerciseStatusFileUIHookGUI');
+            $hook = $ref->newInstanceWithoutConstructor();
+            $verify = $ref->getMethod('verifyCsrfToken');
+            $verify->setAccessible(true);
+
+            $_SESSION['exsf_csrf_token'] = 'unit-test-secret-token';
+
+            $_POST['csrf_token'] = 'unit-test-secret-token';
+            $valid = $verify->invoke($hook);
+
+            $_POST['csrf_token'] = 'wrong-token';
+            $wrong = $verify->invoke($hook);
+
+            unset($_POST['csrf_token']);
+            $missing = $verify->invoke($hook);
+
+            $pass = ($valid === true && $wrong === false && $missing === false);
+            echo $pass
+                ? "   ✅ Gültiger Token akzeptiert, falscher/fehlender abgelehnt\n"
+                : "   ❌ CSRF-Prüfung inkonsistent\n";
+            $this->recordResult('Security: CSRF token validation', $pass);
+        } catch (\Throwable $e) {
+            echo "   ❌ Exception: {$e->getMessage()}\n";
+            $this->recordResult('Security: CSRF token validation', false);
+        } finally {
+            if ($saved_session === null) { unset($_SESSION['exsf_csrf_token']); }
+            else { $_SESSION['exsf_csrf_token'] = $saved_session; }
+            if ($saved_post === null) { unset($_POST['csrf_token']); }
+            else { $_POST['csrf_token'] = $saved_post; }
+        }
+
+        echo "\n";
+    }
+
+    /** #6 Formula injection: dangerous cells get a leading apostrophe, others not. */
+    private function testFormulaInjectionNeutralized(): void
+    {
+        echo "→ Security 2: Formel-Injection im Status-File\n";
+
+        try {
+            require_once dirname(__DIR__, 2) . '/classes/class.ilPluginExAssignmentStatusFile.php';
+            $ref = new \ReflectionClass('ilPluginExAssignmentStatusFile');
+            $obj = $ref->newInstanceWithoutConstructor();
+            $method = $ref->getMethod('neutralizeFormula');
+            $method->setAccessible(true);
+
+            $dangerous = ['=1+1', '+cmd', '-2+3', '@SUM(A1)', "\t=x", "\r=y"];
+            $harmless  = ['Max Mustermann', 'a=b+c', 'login01', ''];
+
+            $pass = true;
+            foreach ($dangerous as $value) {
+                $out = $method->invoke($obj, $value);
+                if ($out === '' || $out[0] !== "'") { $pass = false; }
+            }
+            foreach ($harmless as $value) {
+                if ($method->invoke($obj, $value) !== $value) { $pass = false; }
+            }
+
+            echo $pass
+                ? "   ✅ Formel-Zellen neutralisiert, harmlose Werte unverändert\n"
+                : "   ❌ Neutralisierung inkorrekt\n";
+            $this->recordResult('Security: Formula injection neutralized', $pass);
+        } catch (\Throwable $e) {
+            echo "   ❌ Exception: {$e->getMessage()}\n";
+            $this->recordResult('Security: Formula injection neutralized', false);
+        }
+
+        echo "\n";
+    }
+
+    /** #4 Zip-slip: a "../" entry must never be written outside the extract dir. */
+    private function testZipSlipContained(): void
+    {
+        echo "→ Security 3: Zip-Slip-Schutz\n";
+
+        $zip_path = tempnam(sys_get_temp_dir(), 'exsf_sec_slip_') . '.zip';
+        try {
+            $zip = new \ZipArchive();
+            $zip->open($zip_path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+            $zip->addFromString('../../../exsf_escape_probe.txt', 'pwned');
+            $zip->addFromString('feedback/normal.txt', 'ok');
+            $zip->close();
+
+            $handler = new ilExFeedbackUploadHandler();
+            $ref = new \ReflectionClass($handler);
+            $extract = $ref->getMethod('extractZipContents');
+            $extract->setAccessible(true);
+
+            $extracted = $extract->invoke($handler, $zip_path, 'sec_slip_extract');
+
+            $temp_root = realpath(sys_get_temp_dir());
+            $contained = true;
+            foreach ($extracted as $file) {
+                $real = realpath($file['extracted_path']);
+                if ($real === false || strpos($real, $temp_root) !== 0) {
+                    $contained = false;
+                }
+            }
+
+            // The traversal target must NOT have escaped above the temp dir.
+            $escaped_probe = dirname($temp_root) . '/exsf_escape_probe.txt';
+            if (file_exists($escaped_probe)) {
+                $contained = false;
+                @unlink($escaped_probe);
+            }
+
+            echo $contained
+                ? "   ✅ Traversal-Eintrag blieb im Extract-Verzeichnis (kein Ausbruch)\n"
+                : "   ❌ Datei konnte aus dem Extract-Verzeichnis ausbrechen!\n";
+            $this->recordResult('Security: Zip-slip contained', $contained);
+        } catch (\Throwable $e) {
+            echo "   ❌ Exception: {$e->getMessage()}\n";
+            $this->recordResult('Security: Zip-slip contained', false);
+        } finally {
+            @unlink($zip_path);
+        }
+
+        echo "\n";
+    }
+
+    /** #3 Zip-bomb: a highly compressible oversized entry must be rejected. */
+    private function testZipBombRejected(): void
+    {
+        echo "→ Security 4: Zip-Bomb-Erkennung\n";
+
+        $zip_path = tempnam(sys_get_temp_dir(), 'exsf_sec_bomb_') . '.zip';
+        try {
+            $zip = new \ZipArchive();
+            $zip->open($zip_path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+            // ~11 MB of zeros compress to a few KB -> the ratio guard must trip.
+            $zip->addFromString('bomb.bin', str_repeat("\0", 11 * 1024 * 1024));
+            $zip->close();
+
+            $handler = new ilExFeedbackUploadHandler();
+            $ref = new \ReflectionClass($handler);
+            $extract = $ref->getMethod('extractZipContents');
+            $extract->setAccessible(true);
+
+            $rejected = false;
+            try {
+                $extract->invoke($handler, $zip_path, 'sec_bomb_extract');
+            } catch (\Throwable $e) {
+                $rejected = true;
+            }
+
+            echo $rejected
+                ? "   ✅ Verdächtiges Kompressionsverhältnis wurde abgelehnt\n"
+                : "   ❌ Zip-Bomb wurde NICHT erkannt!\n";
+            $this->recordResult('Security: Zip-bomb rejected', $rejected);
+        } catch (\Throwable $e) {
+            echo "   ❌ Exception beim Aufbau: {$e->getMessage()}\n";
+            $this->recordResult('Security: Zip-bomb rejected', false);
+        } finally {
+            @unlink($zip_path);
+        }
+
+        echo "\n";
     }
 
     private function recordResult(string $name, bool $passed): void

@@ -378,11 +378,11 @@ class ilPluginExAssignmentStatusFile extends ilExcel
             $col = 0;
             $this->setCell($row, $col++, 0, DataType::TYPE_NUMERIC);
             $this->setCell($row, $col++, $team_data['team_id'], DataType::TYPE_NUMERIC);
-            $this->setCell($row, $col++, implode(', ', $logins), DataType::TYPE_STRING);
+            $this->setCell($row, $col++, $this->neutralizeFormula(implode(', ', $logins)), DataType::TYPE_STRING);
             $this->setCell($row, $col++, $member['status'], DataType::TYPE_STRING);
             $this->setCell($row, $col++, $member['mark'], DataType::TYPE_STRING);
-            $this->setCell($row, $col++, $member['notice'], DataType::TYPE_STRING);
-            $this->setCell($row, $col++, $member['comment'], DataType::TYPE_STRING);
+            $this->setCell($row, $col++, $this->neutralizeFormula($member['notice']), DataType::TYPE_STRING);
+            $this->setCell($row, $col++, $this->neutralizeFormula($member['comment']), DataType::TYPE_STRING);
             $this->setCell($row, $col++, ($member['plag_flag'] == 'none' ? '' : $member['plag_flag']), DataType::TYPE_STRING);
             $this->setCell($row, $col, $member['plag_comment'], DataType::TYPE_STRING);
             $row++;
@@ -588,6 +588,22 @@ class ilPluginExAssignmentStatusFile extends ilExcel
         }
     }
 
+    /**
+     * Security: neutralize spreadsheet formula injection (CSV/XLSX). A value a
+     * spreadsheet app would treat as a formula (leading = + - @ or a control
+     * char) gets a leading apostrophe so it is rendered as plain text. Only
+     * values that actually begin with a trigger char are changed, so normal
+     * content and the status/mark round-trip stay untouched.
+     */
+    private function neutralizeFormula($value): string
+    {
+        $value = (string) $value;
+        if ($value !== '' && preg_match('/^[=+\-@\t\r]/', $value)) {
+            return "'" . $value;
+        }
+        return $value;
+    }
+
     protected function writeMemberSheet() {
         try {
             if ($this->workbook->getSheetCount() == 0) {
@@ -614,32 +630,32 @@ class ilPluginExAssignmentStatusFile extends ilExcel
                 $sheet->setCellValue([$col, $row], $member['usr_id']);
                 $col++;
                 
-                $sheet->setCellValue([$col, $row], $member['login']);
+                $sheet->setCellValue([$col, $row], $this->neutralizeFormula($member['login']));
                 $col++;
-                
-                $sheet->setCellValue([$col, $row], $member['lastname']);
+
+                $sheet->setCellValue([$col, $row], $this->neutralizeFormula($member['lastname']));
                 $col++;
-                
-                $sheet->setCellValue([$col, $row], $member['firstname']);
+
+                $sheet->setCellValue([$col, $row], $this->neutralizeFormula($member['firstname']));
                 $col++;
-                
+
                 $sheet->setCellValue([$col, $row], $member['status']);
                 $col++;
-                
+
                 $sheet->setCellValue([$col, $row], $member['mark']);
                 $col++;
-                
-                $sheet->setCellValue([$col, $row], $member['notice']);
+
+                $sheet->setCellValue([$col, $row], $this->neutralizeFormula($member['notice']));
                 $col++;
-                
-                $sheet->setCellValue([$col, $row], $member['comment']);
+
+                $sheet->setCellValue([$col, $row], $this->neutralizeFormula($member['comment']));
                 $col++;
-                
+
                 $plag_display = ($member['plag_flag'] == 'none' ? '' : $member['plag_flag']);
                 $sheet->setCellValue([$col, $row], $plag_display);
                 $col++;
-                
-                $sheet->setCellValue([$col, $row], $member['plag_comment']);
+
+                $sheet->setCellValue([$col, $row], $this->neutralizeFormula($member['plag_comment']));
                 
                 $row++;
             }

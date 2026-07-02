@@ -120,7 +120,11 @@ class ilExTeamButtonRenderer
             // Entferne die umgebenden Anführungszeichen von json_encode
             $txt[$key] = substr($encoded, 1, -1);
         }
-        
+
+        // Security: per-session CSRF token, embedded into the modal JS and sent
+        // back with every state-changing request (hex, so JS-safe as-is).
+        $csrf_token = ilExerciseStatusFileUIHookGUI::getCsrfToken();
+
         $this->template->addOnLoadCode('
             if (typeof window.ExerciseStatusFilePlugin === "undefined") {
                 window.ExerciseStatusFilePlugin = {
@@ -130,6 +134,20 @@ class ilExTeamButtonRenderer
                     // ==========================================
 
                     currentAssignmentId: 0, // Speichere aktuelle Assignment-ID
+                    csrfToken: "' . $csrf_token . '", // CSRF token for state-changing requests
+
+                    // Security: HTML-escape any server/user-supplied value before
+                    // it is placed into innerHTML (prevents DOM XSS via names).
+                    // \x22 = double quote, \x27 = single quote (kept as hex so the
+                    // surrounding PHP single-quoted string is not broken).
+                    escapeHtml: function(value) {
+                        return String(value === null || value === undefined ? "" : value)
+                            .split("&").join("&amp;")
+                            .split("<").join("&lt;")
+                            .split(">").join("&gt;")
+                            .split("\x22").join("&quot;")
+                            .split("\x27").join("&#39;");
+                    },
 
                     startTeamMultiFeedback: function(assignmentId) {
                         this.currentAssignmentId = assignmentId; // Speichere ID
@@ -328,6 +346,7 @@ class ilExTeamButtonRenderer
                         formData.append("ass_id", assignmentId);
                         formData.append("team_ids", teamIds.join(","));
                         formData.append("plugin_action", "multi_feedback_download");
+                        formData.append("csrf_token", window.ExerciseStatusFilePlugin.csrfToken);
 
                         xhr.onload = function() {
                             if (xhr.status === 200) {
@@ -563,7 +582,8 @@ class ilExTeamButtonRenderer
                         formData.append("ass_id", assignmentId);
                         formData.append("plugin_action", "multi_feedback_upload");
                         formData.append("zip_file", file);
-                        
+                        formData.append("csrf_token", window.ExerciseStatusFilePlugin.csrfToken);
+
                         var xhr = new XMLHttpRequest();
                         xhr.open("POST", window.location.pathname, true);
                         
@@ -799,12 +819,12 @@ class ilExTeamButtonRenderer
                             teamsHTML += 
                                 "<div style=\"padding: 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 5px; background: #f8f9fa;\">" +
                                     "<label style=\"cursor: pointer; display: flex; align-items: center;\">" +
-                                        "<input type=\"checkbox\" class=\"team-checkbox\" value=\"" + team.team_id + "\" onchange=\"window.ExerciseStatusFilePlugin.updateSelectedTeamsCount()\" style=\"margin-right: 10px;\">" +
+                                        "<input type=\"checkbox\" class=\"team-checkbox\" value=\"" + parseInt(team.team_id, 10) + "\" onchange=\"window.ExerciseStatusFilePlugin.updateSelectedTeamsCount()\" style=\"margin-right: 10px;\">" +
                                         "<div style=\"flex: 1;\">" +
-                                            "<strong>Team " + team.team_id + "</strong><br>" +
-                                            "<small style=\"color: #666;\">" + team.member_names + "</small><br>" +
+                                            "<strong>Team " + parseInt(team.team_id, 10) + "</strong><br>" +
+                                            "<small style=\"color: #666;\">" + window.ExerciseStatusFilePlugin.escapeHtml(team.member_names) + "</small><br>" +
                                             "<span style=\"display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; margin-top: 5px; background: " + statusColor + "; color: white;\">" +
-                                                team.status +
+                                                window.ExerciseStatusFilePlugin.escapeHtml(team.status) +
                                             "</span>" +
                                         "</div>" +
                                     "</label>" +
@@ -1025,6 +1045,7 @@ class ilExTeamButtonRenderer
                         formData.append("ass_id", assignmentId);
                         formData.append("user_ids", userIds.join(","));
                         formData.append("plugin_action", "multi_feedback_download_individual");
+                        formData.append("csrf_token", window.ExerciseStatusFilePlugin.csrfToken);
 
                         xhr.onload = function() {
                             if (xhr.status === 200) {
@@ -1169,7 +1190,8 @@ class ilExTeamButtonRenderer
                         formData.append("ass_id", assignmentId);
                         formData.append("plugin_action", "multi_feedback_upload");
                         formData.append("zip_file", file);
-                        
+                        formData.append("csrf_token", window.ExerciseStatusFilePlugin.csrfToken);
+
                         var xhr = new XMLHttpRequest();
                         xhr.open("POST", window.location.pathname, true);
                         
@@ -1409,12 +1431,12 @@ class ilExTeamButtonRenderer
                             usersHTML += 
                                 "<div style=\"padding: 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 5px; background: #f8f9fa;\">" +
                                     "<label style=\"cursor: pointer; display: flex; align-items: center;\">" +
-                                        "<input type=\"checkbox\" class=\"individual-user-checkbox\" value=\"" + user.user_id + "\" onchange=\"window.ExerciseStatusFilePlugin.updateSelectedUsersCount()\" style=\"margin-right: 10px;\">" +
+                                        "<input type=\"checkbox\" class=\"individual-user-checkbox\" value=\"" + parseInt(user.user_id, 10) + "\" onchange=\"window.ExerciseStatusFilePlugin.updateSelectedUsersCount()\" style=\"margin-right: 10px;\">" +
                                         "<div style=\"flex: 1;\">" +
-                                            "<strong>" + user.fullname + "</strong><br>" +
-                                            "<small style=\"color: #666;\">" + user.login + "</small><br>" +
+                                            "<strong>" + window.ExerciseStatusFilePlugin.escapeHtml(user.fullname) + "</strong><br>" +
+                                            "<small style=\"color: #666;\">" + window.ExerciseStatusFilePlugin.escapeHtml(user.login) + "</small><br>" +
                                             "<span style=\"display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; margin-top: 5px; background: " + statusColor + "; color: white;\">" +
-                                                user.status +
+                                                window.ExerciseStatusFilePlugin.escapeHtml(user.status) +
                                             "</span>" +
                                         "</div>" +
                                     "</label>" +

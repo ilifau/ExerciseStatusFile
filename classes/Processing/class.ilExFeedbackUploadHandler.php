@@ -12,6 +12,12 @@ declare(strict_types=1);
  */
 class ilExFeedbackUploadHandler
 {
+    // Security limits guarding against decompression ("zip") bombs.
+    private const MAX_ZIP_BYTES = 209715200;            // 200 MB compressed upload
+    private const MAX_ZIP_ENTRIES = 20000;              // max number of entries
+    private const MAX_UNCOMPRESSED_BYTES = 2147483648;  // 2 GB total uncompressed
+    private const MAX_COMPRESSION_RATIO = 200;          // per-entry ratio guard
+
     private ilLogger $logger;
     private array $temp_directories = [];
     private array $processing_stats = [];
@@ -272,10 +278,23 @@ class ilExFeedbackUploadHandler
         }
         
         if (isset($parameters['zip_path']) && file_exists($parameters['zip_path'])) {
+            $this->assertFileSizeWithinLimit($parameters['zip_path']);
             return file_get_contents($parameters['zip_path']);
         }
-        
+
         return null;
+    }
+
+    /**
+     * Security: reject an upload whose compressed size already exceeds the
+     * allowed maximum, before it is read into memory.
+     */
+    private function assertFileSizeWithinLimit(string $path): void
+    {
+        $size = filesize($path);
+        if ($size !== false && $size > self::MAX_ZIP_BYTES) {
+            throw new Exception("Die ZIP-Datei ist zu groß.");
+        }
     }
     
     /**
@@ -344,19 +363,22 @@ class ilExFeedbackUploadHandler
             return [];
         }
         
+        // Security: reject decompression bombs before touching the disk.
+        $this->assertZipWithinLimits($zip);
+
         $extract_dir = $this->createTempDirectory($extract_prefix);
         $extracted_files = [];
-        
+
         try {
+            $real_extract_dir = realpath($extract_dir);
+
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 $filename = $zip->getNameIndex($i);
                 if (empty($filename) || substr($filename, -1) === '/') continue;
 
-                // Security: Prevent path traversal attacks
-                // Remove any ../ or absolute paths
-                $safe_filename = str_replace(['../', '..\\', '../', '..\\'], '', $filename);
-
-                // Remove leading slashes (absolute paths)
+                // Security: derive a safe relative path and NEVER use the archive
+                // path for the filesystem write (structurally defeats zip-slip).
+                $safe_filename = str_replace(['../', '..\\'], '', $filename);
                 $safe_filename = ltrim($safe_filename, '/\\');
 
                 // If filename was completely removed or contains null bytes, skip
@@ -365,31 +387,34 @@ class ilExFeedbackUploadHandler
                     continue;
                 }
 
-                $zip->extractTo($extract_dir, $filename);
                 $extracted_path = $extract_dir . '/' . $safe_filename;
-
-                // Security: Verify extracted file is actually inside extract_dir
-                $real_extract_dir = realpath($extract_dir);
-                $real_extracted_path = realpath($extracted_path);
-
-                if ($real_extracted_path === false || strpos($real_extracted_path, $real_extract_dir) !== 0) {
-                    $this->logger->warning("Path traversal attempt detected: $filename");
-                    // Delete the file if it was extracted outside
-                    if (file_exists($extracted_path)) {
-                        @unlink($extracted_path);
-                    }
+                $target_dir = dirname($extracted_path);
+                if (!is_dir($target_dir) && !mkdir($target_dir, 0700, true) && !is_dir($target_dir)) {
                     continue;
                 }
 
-                if (file_exists($extracted_path)) {
-                    $extracted_files[] = [
-                        'original_name' => $filename,
-                        'extracted_path' => $extracted_path,
-                        'size' => filesize($extracted_path)
-                    ];
+                // Security: verify the resolved target directory is still inside
+                // the extract dir (belt-and-suspenders next to the safe path).
+                $real_target_dir = realpath($target_dir);
+                if ($real_extract_dir === false || $real_target_dir === false
+                    || strpos($real_target_dir, $real_extract_dir) !== 0) {
+                    $this->logger->warning("Path traversal attempt detected, skipped: $filename");
+                    continue;
                 }
+
+                // Extract by content under the sanitized name.
+                $content = $zip->getFromIndex($i);
+                if ($content === false || file_put_contents($extracted_path, $content) === false) {
+                    continue;
+                }
+
+                $extracted_files[] = [
+                    'original_name' => $filename,
+                    'extracted_path' => $extracted_path,
+                    'size' => filesize($extracted_path)
+                ];
             }
-            
+
         } finally {
             $zip->close();
         }
@@ -1503,6 +1528,40 @@ class ilExFeedbackUploadHandler
         $_SESSION['exc_status_files_stats'][$assignment_id][$tutor_id] = $this->processing_stats;
     }
     
+    /**
+     * Security: guard against decompression bombs. Rejects archives with too
+     * many entries, an excessive total uncompressed size, or a single entry
+     * whose compression ratio looks like a bomb.
+     */
+    private function assertZipWithinLimits(\ZipArchive $zip): void
+    {
+        if ($zip->numFiles > self::MAX_ZIP_ENTRIES) {
+            throw new Exception("Das ZIP-Archiv enthält zu viele Dateien.");
+        }
+
+        $total_uncompressed = 0;
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if ($stat === false) {
+                continue;
+            }
+
+            $size = (int) ($stat['size'] ?? 0);
+            $comp = (int) ($stat['comp_size'] ?? 0);
+
+            $total_uncompressed += $size;
+            if ($total_uncompressed > self::MAX_UNCOMPRESSED_BYTES) {
+                throw new Exception("Das ZIP-Archiv ist entpackt zu groß.");
+            }
+
+            // Only flag large entries so tiny, highly compressible files
+            // (e.g. text status files) do not trigger a false positive.
+            if ($comp > 0 && $size > 10485760 && ($size / $comp) > self::MAX_COMPRESSION_RATIO) {
+                throw new Exception("Verdächtiges Kompressionsverhältnis im ZIP-Archiv.");
+            }
+        }
+    }
+
     /**
      * Temp-Directory erstellen
      */
