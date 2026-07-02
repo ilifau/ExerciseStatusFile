@@ -101,7 +101,16 @@ status_notgraded#:#Not graded
 
 <!-- Buttons -->
 btn_multi_feedback#:#Multi-Feedback
-btn_multi_feedback_ks#:#Multi-Feedback (KS)
+btn_multi_feedback_ks#:#Download multi-feedback
+btn_multi_feedback_upload_ks#:#Upload multi-feedback
+upload_warnings_label#:#warning(s)
+
+<!-- Multi-Feedback Modal Guidance -->
+multi_feedback_download_intro#:#Download the submissions as a ZIP, add your feedback offline, then upload the same ZIP again.
+multi_feedback_step_download#:#Download the ZIP (contains all submissions, the status file and a README with instructions).
+multi_feedback_step_edit#:#Place feedback files into each participant's folder and edit the status file (Excel/CSV) - mark rows to update with 'update=1'.
+multi_feedback_step_upload#:#Upload the same ZIP again via 'Upload multi-feedback'.
+multi_feedback_upload_intro#:#Upload exactly the ZIP file you downloaded and edited. The status file inside controls the grading updates.
 btn_download#:#Download
 btn_upload#:#Upload
 btn_close#:#Close

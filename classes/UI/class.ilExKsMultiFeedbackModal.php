@@ -48,6 +48,9 @@ class ilExKsMultiFeedbackModal
         }
 
         return $this->buildButtonAndModal(
+            $this->plugin->txt('btn_multi_feedback_ks'),
+            $this->plugin->txt('multi_feedback_download_intro'),
+            $this->downloadSteps(),
             $this->buildTeamSelectionForm($assignment_id, $teams)
         );
     }
@@ -67,8 +70,43 @@ class ilExKsMultiFeedbackModal
         }
 
         return $this->buildButtonAndModal(
+            $this->plugin->txt('btn_multi_feedback_ks'),
+            $this->plugin->txt('multi_feedback_download_intro'),
+            $this->downloadSteps(),
             $this->buildIndividualSelectionForm($assignment_id, $users)
         );
+    }
+
+    /**
+     * Build the KitchenSink button + RoundTrip modal for the feedback UPLOAD.
+     * Identical for team and individual assignments - the backend decides the
+     * handling from the assignment type.
+     *
+     * @return array{button: string, modal: string}
+     */
+    public function renderUpload(int $assignment_id): array
+    {
+        return $this->buildButtonAndModal(
+            $this->plugin->txt('btn_multi_feedback_upload_ks'),
+            $this->plugin->txt('multi_feedback_upload_intro'),
+            [],
+            $this->buildUploadForm($assignment_id)
+        );
+    }
+
+    /**
+     * The three workflow steps shown as a native KS ordered listing in the
+     * download modal, so tutors see the full round-trip before they start.
+     *
+     * @return string[]
+     */
+    private function downloadSteps(): array
+    {
+        return [
+            $this->plugin->txt('multi_feedback_step_download'),
+            $this->plugin->txt('multi_feedback_step_edit'),
+            $this->plugin->txt('multi_feedback_step_upload'),
+        ];
     }
 
     /**
@@ -76,9 +114,15 @@ class ilExKsMultiFeedbackModal
      * button that opens it. Same pattern as ILIAS core (ilExerciseManagementGUI):
      * the button's onClick fires the modal's show signal - no AJAX, no custom JS.
      *
+     * The modal leads with native KS guidance (an info message box and, for the
+     * download, an ordered list of the round-trip steps) so tutors understand
+     * the download -> edit -> upload workflow before they act. The selection /
+     * upload form itself stays a legacy() form (streamed ZIP / file upload).
+     *
+     * @param string[] $steps Optional ordered workflow steps (empty = none).
      * @return array{button: string, modal: string}
      */
-    private function buildButtonAndModal(string $form_html): array
+    private function buildButtonAndModal(string $label, string $intro, array $steps, string $form_html): array
     {
         global $DIC;
 
@@ -86,12 +130,17 @@ class ilExKsMultiFeedbackModal
         $factory = $ui->factory();
         $renderer = $ui->renderer();
 
-        $label = $this->plugin->txt('btn_multi_feedback_ks');
+        $content = [];
+        if ($intro !== '') {
+            $content[] = $factory->messageBox()->info($intro);
+        }
+        if (!empty($steps)) {
+            $content[] = $factory->listing()->ordered($steps);
+        }
+        $content[] = $factory->divider()->horizontal();
+        $content[] = $factory->legacy($form_html);
 
-        $modal = $factory->modal()->roundtrip(
-            $label,
-            [$factory->legacy($form_html)]
-        );
+        $modal = $factory->modal()->roundtrip($label, $content);
         $button = $factory->button()->standard($label, '#')
             ->withOnClick($modal->getShowSignal());
 
@@ -148,6 +197,29 @@ class ilExKsMultiFeedbackModal
         }
 
         return $this->buildForm('multi_feedback_download_individual', $assignment_id, $rows, 'individual_select_for_download');
+    }
+
+    /**
+     * Native multipart upload form. Posts the ZIP to the existing
+     * multi_feedback_upload backend; the ks_native flag makes the backend
+     * answer with a redirect + ILIAS on-screen message instead of JSON.
+     */
+    private function buildUploadForm(int $assignment_id): string
+    {
+        $action = htmlspecialchars($_SERVER['REQUEST_URI'] ?? '', ENT_QUOTES);
+        $intro = htmlspecialchars($this->plugin->txt('upload_select_file_desc'), ENT_QUOTES);
+        $hint = htmlspecialchars($this->plugin->txt('upload_hint'), ENT_QUOTES);
+        $submit_label = htmlspecialchars($this->plugin->txt('btn_start_upload'), ENT_QUOTES);
+
+        return '<form method="post" action="' . $action . '" enctype="multipart/form-data">'
+            . '<input type="hidden" name="plugin_action" value="multi_feedback_upload">'
+            . '<input type="hidden" name="ks_native" value="1">'
+            . '<input type="hidden" name="ass_id" value="' . $assignment_id . '">'
+            . '<p>' . $intro . '</p>'
+            . '<input type="file" name="zip_file" accept=".zip,application/zip" required style="margin-bottom:12px;">'
+            . '<p style="color:#666;font-size:.9em;">' . $hint . '</p>'
+            . '<div style="margin-top:8px;"><button type="submit" class="btn btn-primary">' . $submit_label . '</button></div>'
+            . '</form>';
     }
 
     private function checkboxRow(string $field, int $value, string $label): string

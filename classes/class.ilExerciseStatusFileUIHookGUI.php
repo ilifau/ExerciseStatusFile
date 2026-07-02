@@ -91,6 +91,28 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     }
 
     /**
+     * Native KitchenSink upload response: store an ILIAS on-screen message and
+     * redirect back to the page the form was submitted from. Used instead of the
+     * JSON response when the request comes from the native multipart form.
+     *
+     * @param string $type One of: success, info, failure, question
+     */
+    private function respondNativeAndRedirect(string $type, string $message): void
+    {
+        global $DIC;
+
+        try {
+            $DIC->ui()->mainTemplate()->setOnScreenMessage($type, $message, true);
+        } catch (Exception $e) {
+            $this->logger->error("Could not set on-screen message: " . $e->getMessage());
+        }
+
+        $target = $_SERVER['HTTP_REFERER'] ?? './ilias.php?baseClass=ilExerciseManagementGUI';
+        header('Location: ' . $target);
+        exit;
+    }
+
+    /**
      * HTML-Hook Processing mit Multi-Feedback Download Support
      */
     public function getHTML(string $a_comp, string $a_part, array $a_par = []): array
@@ -115,28 +137,54 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
         ) {
             $toolbar_html = $a_par["html"] ?? "";
 
+            // TEMP DEBUG: dump the incoming exercise toolbar. Remove after diagnosis.
+            if (strpos($toolbar_html, 'cmd[downloadSubmissions]') !== false) {
+                file_put_contents('/var/www/StudOn/data/exsf_toolbar_dump.html', $toolbar_html);
+            }
+
             // Anchor on the native "download all submissions" button: it marks
-            // the main exercise toolbar (order-independent, idempotent) and is
-            // the natural neighbour for our download action.
+            // the main exercise toolbar (order-independent, idempotent).
             $marker = 'name="cmd[downloadSubmissions]"';
             $marker_pos = $toolbar_html !== "" ? strpos($toolbar_html, $marker) : false;
 
             if ($marker_pos !== false) {
                 $parts = $this->renderKsDownloadModal();
                 if (!empty($parts)) {
-                    // Insert the KS button right after the "download all
-                    // submissions" <input>, inside the same navbar-form, so it
-                    // sits next to that button instead of at the toolbar start.
-                    $tag_end = strpos($toolbar_html, ">", $marker_pos);
-                    if ($tag_end !== false) {
-                        $insert_at = $tag_end + 1;
-                        $new_html = substr($toolbar_html, 0, $insert_at)
-                            . $parts["button"]
-                            . substr($toolbar_html, $insert_at)
-                            . $parts["modal"];
+                    // Our multi-feedback download is a superset of the core
+                    // "download all submissions" (it adds status files + README),
+                    // so we put our KS buttons in that button's place and drop the
+                    // two now-redundant core actions:
+                    //   - "download all submissions" (cmd[downloadSubmissions])
+                    //   - "multi feedback"           (showMultiFeedback, individual only)
+                    // Pure rendered-HTML surgery in our hook - no core code is
+                    // touched, and a core markup change at worst leaves the
+                    // original button visible (removeToolbarItem is a safe no-op).
+                    $our_item = '<div class="l-bar__element c-toolbar__item">'
+                        . '<div class="navbar-form">' . $parts["buttons"] . '</div></div>';
 
-                        return ["mode" => ilUIHookPluginGUI::REPLACE, "html" => $new_html];
-                    }
+                    $item_tag = '<div class="l-bar__element c-toolbar__item">';
+                    $item_start = strrpos(substr($toolbar_html, 0, $marker_pos), $item_tag);
+                    $insert_at = $item_start !== false ? $item_start : $marker_pos;
+
+                    $new_html = substr($toolbar_html, 0, $insert_at)
+                        . $our_item
+                        . substr($toolbar_html, $insert_at);
+
+                    $new_html = $this->removeToolbarItem($new_html, $marker);
+                    $new_html = $this->removeToolbarItem($new_html, "showMultiFeedback");
+
+                    // Removing items can orphan the core separators (addSeparator)
+                    // and leave empty item groups behind, showing dangling "|"
+                    // marks. Tidy those up.
+                    $new_html = $this->cleanupToolbarGroups($new_html);
+
+                    // TEMP DEBUG: also dump the resulting toolbar so we can verify
+                    // the cleanup. Remove after diagnosis.
+                    file_put_contents('/var/www/StudOn/data/exsf_toolbar_result.html', $new_html);
+
+                    $new_html .= $parts["modals"];
+
+                    return ["mode" => ilUIHookPluginGUI::REPLACE, "html" => $new_html];
                 }
             }
         }
@@ -159,12 +207,122 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
     }
 
     /**
-     * Render the native KitchenSink multi-feedback button + modal for the
-     * download, but only in the exercise members view of an assignment the
-     * current user may grade. Picks the team or individual variant based on the
-     * assignment type. Returns an empty array in every other context.
+     * Remove the complete toolbar item (the wrapping
+     * <div class="l-bar__element c-toolbar__item">...</div>) that contains the
+     * given marker. Separator/empty-group fallout is dealt with afterwards in
+     * cleanupToolbarGroups().
      *
-     * @return array{button: string, modal: string}|array{}
+     * Returns the HTML unchanged when the marker or its wrapper cannot be found,
+     * so a future core markup change can never break the page - at worst the
+     * core button simply stays visible.
+     */
+    private function removeToolbarItem(string $html, string $marker): string
+    {
+        $marker_pos = strpos($html, $marker);
+        if ($marker_pos === false) {
+            return $html;
+        }
+
+        $item_tag = '<div class="l-bar__element c-toolbar__item">';
+        $start = strrpos(substr($html, 0, $marker_pos), $item_tag);
+        if ($start === false) {
+            return $html;
+        }
+
+        $end = $this->matchingDivEnd($html, $start);
+        if ($end === null) {
+            return $html;
+        }
+
+        return substr($html, 0, $start) . substr($html, $end);
+    }
+
+    /**
+     * Tidy up the toolbar after items have been removed. The real toolbar markup
+     * nests items in groups (<div class="l-bar__group c-toolbar__group">) with
+     * separators *between* the groups, and the closing tags sit on their own
+     * line - so both patterns are matched whitespace-tolerantly. We:
+     *   1. drop groups that are now empty (e.g. the lone "multi feedback" button)
+     *   2. collapse consecutive separators and trim leading/trailing ones, so no
+     *      "|" mark dangles next to a removed group.
+     * Scoped to the main-body group so the lead items and our appended modal
+     * overlays stay untouched.
+     */
+    private function cleanupToolbarGroups(string $html): string
+    {
+        $group_tag = '<div class="l-bar__group c-toolbar__main-body">';
+        $group_start = strpos($html, $group_tag);
+        if ($group_start === false) {
+            return $html;
+        }
+
+        $group_end = $this->matchingDivEnd($html, $group_start);
+        if ($group_end === null) {
+            return $html;
+        }
+
+        $inner_start = $group_start + strlen($group_tag);
+        $inner_end = $group_end - strlen("</div>");
+        $inner = substr($html, $inner_start, $inner_end - $inner_start);
+
+        $sep = '<div class="ilToolbarSeparator l-bar__group">\s*<\/div>';
+        $empty_group = '<div class="l-bar__group c-toolbar__group">\s*<\/div>';
+        $separator = '<div class="ilToolbarSeparator l-bar__group"></div>';
+
+        // 1. Remove emptied item groups.
+        $inner = preg_replace('/' . $empty_group . '/', '', $inner);
+        // 2. Collapse consecutive separators, then trim leading/trailing ones.
+        $inner = preg_replace('/(?:' . $sep . '\s*){2,}/', $separator, $inner);
+        $inner = preg_replace('/^\s*(?:' . $sep . '\s*)+/', '', $inner);
+        $inner = preg_replace('/(?:\s*' . $sep . ')+\s*$/', '', $inner);
+
+        return substr($html, 0, $inner_start) . $inner . substr($html, $inner_end);
+    }
+
+    /**
+     * Given the offset of an opening <div>, return the offset just past its
+     * matching </div> by depth-counting nested <div>/</div> tags. Returns null
+     * if the tags are unbalanced.
+     */
+    private function matchingDivEnd(string $html, int $start): ?int
+    {
+        $depth = 0;
+        $i = $start;
+        $len = strlen($html);
+
+        while ($i < $len) {
+            $open = strpos($html, "<div", $i);
+            $close = strpos($html, "</div>", $i);
+            if ($close === false) {
+                return null;
+            }
+
+            if ($open !== false && $open < $close) {
+                $depth++;
+                $i = $open + 4;
+            } else {
+                $depth--;
+                $i = $close + 6;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Render the native KitchenSink multi-feedback toolbar add-on (download +
+     * upload buttons with their RoundTrip modals), but only in the exercise
+     * members view of an assignment the current user may grade. The download
+     * variant follows the assignment type; the upload is the same for both.
+     *
+     * Buttons and modals are returned concatenated and separately, so the
+     * caller can place the buttons inline in the toolbar while appending the
+     * modal overlays anywhere. Returns an empty array in every other context.
+     *
+     * @return array{buttons: string, modals: string}|array{}
      */
     private function renderKsDownloadModal(): array
     {
@@ -188,7 +346,7 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 return [];
             }
 
-            // Same access gate as the download backend.
+            // Same access gate as the download/upload backend.
             if (!$this->checkAssignmentAccess($assignment_id)) {
                 return [];
             }
@@ -196,11 +354,26 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
             $assignment = new \ilExAssignment($assignment_id);
             $modal = new ilExKsMultiFeedbackModal($this->plugin);
 
-            if ($assignment->getAssignmentType()->usesTeams()) {
-                return $modal->renderTeamDownload($assignment_id);
+            $download = $assignment->getAssignmentType()->usesTeams()
+                ? $modal->renderTeamDownload($assignment_id)
+                : $modal->renderIndividualDownload($assignment_id);
+
+            $upload = $modal->renderUpload($assignment_id);
+
+            $buttons = "";
+            $modals = "";
+            foreach ([$download, $upload] as $part) {
+                if (!empty($part)) {
+                    $buttons .= $part["button"];
+                    $modals .= $part["modal"];
+                }
             }
 
-            return $modal->renderIndividualDownload($assignment_id);
+            if ($buttons === "") {
+                return [];
+            }
+
+            return ["buttons" => $buttons, "modals" => $modals];
 
         } catch (Exception $e) {
             $this->logger->error("KS modal render error: " . $e->getMessage());
@@ -353,6 +526,10 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
      */
     private function handleMultiFeedbackUploadRequest(): void
     {
+        // Native KitchenSink upload form posts a real multipart request and
+        // expects a redirect + ILIAS on-screen message instead of JSON.
+        $is_native = isset($_POST['ks_native']);
+
         try {
             $assignment_id = $_POST['ass_id'] ?? null;
 
@@ -411,13 +588,30 @@ class ilExerciseStatusFileUIHookGUI extends ilUIHookPluginGUI
                 $response['warnings'] = $warnings;
             }
 
+            // Native KitchenSink form: redirect back with an on-screen message.
+            if ($is_native) {
+                $message = $response['message'];
+                if (!empty($warnings)) {
+                    $message .= ' (' . count($warnings) . ' '
+                        . $this->plugin->txt('upload_warnings_label') . ')';
+                }
+                $type = empty($warnings) ? 'success' : 'info';
+                $this->respondNativeAndRedirect($type, $message);
+                return;
+            }
+
             // Success Response
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
             exit;
-            
+
         } catch (Exception $e) {
             $this->logger->error("Multi-Feedback upload error: " . $e->getMessage());
+
+            if ($is_native) {
+                $this->respondNativeAndRedirect('failure', $e->getMessage());
+                return;
+            }
 
             // Error Response mit detaillierter Fehlermeldung
             header('Content-Type: application/json; charset=utf-8');

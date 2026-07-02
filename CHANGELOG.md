@@ -8,9 +8,12 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ### Hinzugefügt (Proof of Concept)
 
-#### Multi-Feedback-Download-Modal auf KitchenSink umgestellt (Team + Individual)
-- **Neuer Button „Multi-Feedback (KS)"** parallel zum bestehenden Eigenbau-Modal,
-  für **Team- und Individual-Assignments** (passende User-/Team-Auswahl)
+#### Multi-Feedback-Modals auf KitchenSink umgestellt (Download + Upload)
+- **Neuer Button „Multi-Feedback (KS)"** für den **Download** (Team + Individual)
+- **Neuer Button „Upload (KS)"** für den **Upload** (gleich für Team + Individual);
+  natives Multipart-Formular im KS-RoundTrip-Modal → bestehendes Upload-Backend.
+  Backend antwortet bei `ks_native=1` mit **Redirect + ILIAS-Bordmittel-Meldung**
+  (`setOnScreenMessage`) statt JSON; Erfolg/Warnungen erscheinen als Message-Box.
 - Natives ILIAS-9-**RoundTrip-Modal** statt selbstgebautem HTML/JavaScript
 - Trigger über `button()->withOnClick($modal->getShowSignal())` — **kein AJAX,
   kein custom JS** (exakt das Core-Pattern aus `ilExerciseManagementGUI`)
@@ -27,9 +30,9 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   injizierten ~1400 Zeilen Modal-Code (`renderTeamButton`/`renderIndividualButton`,
   `registerGlobalJavaScriptFunctions`, `addCustomCSS` werden nicht mehr aufgerufen)
 - Toter Code `getAssignmentInfo()` entfernt
-- **⚠️ Folge:** Der **Upload** lief über genau dieses alte Modal und ist damit
-  **vorübergehend nicht verfügbar**, bis er auf KitchenSink migriert ist
-  (nächster Schritt). „Run Tests" (Admin) bleibt unverändert.
+- „Run Tests" (Admin) bleibt unverändert.
+- (Der Upload, der über das alte Modal lief, ist jetzt über „Upload (KS)" wieder
+  verfügbar — siehe oben.)
 
 ## [1.3.0] - 2026-01-28
 

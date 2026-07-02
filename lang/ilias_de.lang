@@ -40,7 +40,7 @@ individual_no_submission#:#Keine Abgabe
 <!-- Upload -->
 upload_title#:#Bearbeitete ZIP hochladen
 upload_select_file#:#ZIP-Datei auswählen
-upload_select_file_desc#:#Wähle die bearbeitete Multi-Feedback ZIP-Datei
+upload_select_file_desc#:#Wählen Sie die bearbeitete Multi-Feedback-ZIP-Datei aus.
 upload_file_selected#:#Ausgewählte Datei
 upload_file_ready#:#ZIP-Datei bereit für Upload
 upload_file_validation_detail#:#Detaillierte Validierung erfolgt beim Upload
@@ -101,7 +101,16 @@ status_notgraded#:#Nicht bewertet
 
 <!-- Buttons -->
 btn_multi_feedback#:#Multi-Feedback
-btn_multi_feedback_ks#:#Multi-Feedback (KS)
+btn_multi_feedback_ks#:#Multi-Feedback herunterladen
+btn_multi_feedback_upload_ks#:#Multi-Feedback hochladen
+upload_warnings_label#:#Warnung(en)
+
+<!-- Multi-Feedback Modal Guidance -->
+multi_feedback_download_intro#:#Laden Sie die Abgaben als ZIP herunter, geben Sie offline Feedback und laden Sie dieselbe ZIP anschließend wieder hoch.
+multi_feedback_step_download#:#ZIP herunterladen (enthält alle Abgaben, die Status-Datei und eine README mit Anleitung).
+multi_feedback_step_edit#:#Feedback-Dateien in die jeweiligen Personen-Ordner legen und die Status-Datei (Excel/CSV) bearbeiten – zu aktualisierende Zeilen mit 'update=1' markieren.
+multi_feedback_step_upload#:#Dieselbe ZIP über 'Multi-Feedback hochladen' wieder einspielen.
+multi_feedback_upload_intro#:#Laden Sie exakt die ZIP-Datei hoch, die Sie zuvor heruntergeladen und bearbeitet haben. Die enthaltene Status-Datei steuert die Bewertungs-Updates.
 btn_download#:#Download
 btn_upload#:#Upload
 btn_close#:#Schließen
