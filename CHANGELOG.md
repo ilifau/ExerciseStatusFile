@@ -4,6 +4,38 @@ Alle wichtigen Änderungen am ExerciseStatusFile Plugin werden in dieser Datei d
 
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [Unreleased]
+
+### Hinzugefügt
+
+#### Erklärungen im Multi-Feedback-Modal
+- Pro Tab (Download/Upload, jeweils Team **und** Individual) eine kurze Erklärung
+  des Download→Bearbeiten→Upload-Workflows direkt im Modal (Sie-Form).
+- Neue Sprach-Keys: `tab_desc_download_team`, `tab_desc_download_individual`,
+  `tab_desc_upload`.
+
+### Sicherheit
+
+- **XSS:** Team-/Teilnehmer-Namen werden vor der DOM-Ausgabe client-seitig
+  escaped (`escapeHtml`), Checkbox-Werte per `parseInt` abgesichert.
+- **CSRF:** Per-Session-Token, in allen state-changing Requests (Upload + beide
+  Downloads) mitgeschickt und serverseitig per `hash_equals` geprüft.
+- **Zip-Bomb / DoS:** Server-seitige Limits (max. 200 MB komprimiert, 20000
+  Einträge, 2 GB entpackt, Kompressionsverhältnis-Guard) statt nur Client-Prüfung.
+- **Zip-Slip:** Extraktion ausschließlich unter bereinigtem Dateinamen, Zielpfad
+  wird gegen das Extract-Verzeichnis verifiziert (Archiv-Pfad wird nie zum
+  Schreiben genutzt).
+- **Info-Disclosure:** Fehler-Responses ohne interne Details (`details` /
+  `error_details` entfernt, kein `var_export`); technische Details nur noch im Log.
+- **Formel-Injection:** Status-Datei-Zellen (Login/Name/Notice/Kommentar), die mit
+  `= + - @` beginnen, werden neutralisiert — für CSV und XLSX.
+
+### Tests
+
+- Neue automatisierte Sicherheits-Regressionstests (`runSecurityTests` im
+  Integrationstest-Runner): CSRF-Prüfung, Formel-Neutralisierung, Zip-Slip-
+  Eindämmung, Zip-Bomb-Abweisung. Läuft über den Admin-Button „Run Tests".
+
 ## [1.3.0] - 2026-01-28
 
 ### Hinzugefügt
