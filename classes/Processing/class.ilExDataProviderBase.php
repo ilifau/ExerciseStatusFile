@@ -205,31 +205,6 @@ abstract class ilExDataProviderBase
     }
 
     /**
-     * Load user data (single user - legacy support)
-     */
-    protected function getMemberData(int $user_id): ?array
-    {
-        try {
-            $user_data = \ilObjUser::_lookupName($user_id);
-            if (!$user_data || !$user_data['login']) {
-                return null;
-            }
-
-            return [
-                'user_id' => $user_id,
-                'login' => $user_data['login'],
-                'firstname' => $user_data['firstname'],
-                'lastname' => $user_data['lastname'],
-                'fullname' => trim($user_data['firstname'] . ' ' . $user_data['lastname'])
-            ];
-
-        } catch (Exception $e) {
-            $this->logger->error("Error loading member data for user $user_id: " . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
      * Send JSON response headers
      */
     protected function sendJSONHeaders(): void

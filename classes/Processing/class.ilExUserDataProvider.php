@@ -90,43 +90,6 @@ class ilExUserDataProvider extends ilExDataProviderBase
     }
 
     /**
-     * User-Daten erstellen (mit robusterem Submission-Check)
-     */
-    private function buildUserData(int $user_id, \ilExAssignment $assignment): ?array
-    {
-        try {
-            // User-Daten laden
-            $user_data = \ilObjUser::_lookupName($user_id);
-            if (!$user_data || !$user_data['login']) {
-                return null;
-            }
-
-            // Status ermitteln
-            $user_status = $this->getUserStatus($user_id, $assignment);
-
-            // Submission prüfen - VERBESSERTE VERSION
-            $has_submission = $this->checkSubmissionExists($user_id, $assignment);
-
-            return [
-                'user_id' => $user_id,
-                'login' => $user_data['login'],
-                'firstname' => $user_data['firstname'],
-                'lastname' => $user_data['lastname'],
-                'fullname' => trim($user_data['firstname'] . ' ' . $user_data['lastname']),
-                'status' => $user_status['status'],
-                'mark' => $user_status['mark'],
-                'notice' => $user_status['notice'],
-                'comment' => $user_status['comment'],
-                'has_submission' => $has_submission
-            ];
-
-        } catch (Exception $e) {
-            $this->logger->error("Error building user data for user $user_id: " . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
      * PERFORMANCE: Batch-Check ob User Submissions haben
      *
      * @param int $assignment_id Assignment ID
@@ -217,88 +180,6 @@ class ilExUserDataProvider extends ilExDataProviderBase
         } catch (Exception $e) {
             $this->logger->error("Error building optimized user data for user $user_id: " . $e->getMessage());
             return null;
-        }
-    }
-
-    /**
-     * User-Status ermitteln
-     */
-    private function getUserStatus(int $user_id, \ilExAssignment $assignment): array
-    {
-        try {
-            $member_status = $assignment->getMemberStatus($user_id);
-
-            if ($member_status) {
-                return [
-                    'status' => $this->translateStatus($member_status->getStatus()),
-                    'mark' => $member_status->getMark() ?: '',
-                    'notice' => $member_status->getNotice() ?: '',
-                    'comment' => $member_status->getComment() ?: ''
-                ];
-            }
-
-            return $this->getDefaultStatus();
-
-        } catch (Exception $e) {
-            $this->logger->error("Error getting user status: " . $e->getMessage());
-            return $this->getDefaultStatus();
-        }
-    }
-
-    /**
-     * Prüfen ob User eine Submission hat - NEUE ROBUSTE METHODE
-     */
-    private function checkSubmissionExists(int $user_id, \ilExAssignment $assignment): bool
-    {
-        try {
-            $assignment_id = $assignment->getId();
-
-            // Methode 1: Direkter DB-Check in exc_returned (zuverlässigste Methode)
-            $query = "SELECT COUNT(*) as cnt FROM exc_returned
-                      WHERE ass_id = " . $this->db->quote($assignment_id, 'integer') . "
-                      AND user_id = " . $this->db->quote($user_id, 'integer');
-
-            $result = $this->db->query($query);
-            if ($row = $this->db->fetchAssoc($result)) {
-                if ((int)$row['cnt'] > 0) {
-                    return true;
-                }
-            }
-
-            // Methode 2: Check über ilExSubmission Objekt
-            try {
-                $submission = new \ilExSubmission($assignment, $user_id);
-
-                if ($submission && $submission->hasSubmitted()) {
-                    return true;
-                }
-
-                // Prüfe auch Files
-                $files = $submission->getFiles();
-                if (!empty($files) && is_array($files) && count($files) > 0) {
-                    return true;
-                }
-            } catch (Exception $e) {
-                // Submission-Objekt konnte nicht erstellt werden - ignorieren
-            }
-
-            // Methode 3: Check über MemberStatus
-            try {
-                $member_status = $assignment->getMemberStatus($user_id);
-                if ($member_status) {
-                    if ($member_status->getReturned()) {
-                        return true;
-                    }
-                }
-            } catch (Exception $e) {
-                // MemberStatus konnte nicht geladen werden - ignorieren
-            }
-
-            return false;
-
-        } catch (Exception $e) {
-            $this->logger->error("Error checking submission for user $user_id in assignment {$assignment->getId()}: " . $e->getMessage());
-            return false;
         }
     }
 

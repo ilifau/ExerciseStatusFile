@@ -127,51 +127,6 @@ class ilExTeamDataProvider extends ilExDataProviderBase
     }
 
     /**
-     * Team-Daten erstellen (Legacy - ohne Batch-Loading)
-     */
-    private function buildTeamData(ilExAssignmentTeam $team, \ilExAssignment $assignment): ?array
-    {
-        try {
-            $team_id = $team->getId();
-            $member_ids = $team->getMembers();
-
-            if (empty($member_ids)) {
-                return null;
-            }
-
-            $members_data = [];
-            foreach ($member_ids as $user_id) {
-                $member_data = $this->getMemberData($user_id);
-                if ($member_data) {
-                    $members_data[] = $member_data;
-                }
-            }
-
-            if (empty($members_data)) {
-                return null;
-            }
-
-            $team_status = $this->getTeamStatus($team, $assignment);
-
-            return [
-                'team_id' => $team_id,
-                'member_count' => count($members_data),
-                'members' => $members_data,
-                'status' => $team_status['status'],
-                'mark' => $team_status['mark'],
-                'notice' => $team_status['notice'],
-                'comment' => $team_status['comment'],
-                'last_submission' => null,
-                'has_submissions' => false
-            ];
-
-        } catch (Exception $e) {
-            $this->logger->error("Error building team data for team " . $team->getId() . ": " . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
      * Team-Status ermitteln
      */
     private function getTeamStatus(ilExAssignmentTeam $team, \ilExAssignment $assignment): array
