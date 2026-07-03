@@ -84,7 +84,6 @@ class ilExTeamButtonRenderer
             'upload_start' => $this->plugin->txt('upload_start'),
             'upload_select_file_first' => $this->plugin->txt('upload_select_file_first'),
             'upload_in_progress' => $this->plugin->txt('upload_in_progress'),
-            'upload_processing' => $this->plugin->txt('upload_processing'),
             'upload_success' => $this->plugin->txt('upload_success'),
             'upload_success_msg' => $this->plugin->txt('upload_success_msg'),
             'upload_reload_page' => $this->plugin->txt('upload_reload_page'),

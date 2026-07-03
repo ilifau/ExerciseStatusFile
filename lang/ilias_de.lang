@@ -35,6 +35,7 @@ individual_select_all#:#Alle Teilnehmer auswählen
 individual_selected_count#:#Teilnehmer ausgewählt
 individual_download_start#:#Download starten
 individual_download_generating#:#Individual Multi-Feedback wird generiert...
+individual_download_auto#:#Download startet automatisch...
 individual_no_users_found#:#Keine Teilnehmer gefunden
 individual_error_loading#:#Fehler beim Laden der Teilnehmer
 individual_submission_available#:#Abgabe vorhanden
